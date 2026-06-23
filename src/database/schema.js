@@ -21,4 +21,14 @@ export const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS plugin_data(plugin TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(plugin,key));
   CREATE TABLE IF NOT EXISTS warns      (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT NOT NULL, groupJid TEXT NOT NULL, reason TEXT, givenBy TEXT, createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE INDEX IF NOT EXISTS idx_warns ON warns(jid,groupJid);
+  CREATE TABLE IF NOT EXISTS ai_history (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    chatJid   TEXT    NOT NULL,
+    senderJid TEXT,
+    role      TEXT    NOT NULL CHECK(role IN ('system','user','assistant')),
+    content   TEXT    NOT NULL,
+    tokens    INTEGER,
+    createdAt TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_history ON ai_history (chatJid, createdAt);
 `;
