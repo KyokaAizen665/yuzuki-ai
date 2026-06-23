@@ -28,7 +28,7 @@ export const meta = {
   group:       null,
 };
 
-const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';
+const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;
 
 export async function handler(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
