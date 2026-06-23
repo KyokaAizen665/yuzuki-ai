@@ -1,9 +1,23 @@
 /**
-   * RichMessageService — Phase 5
+   * RichMessageService — Phase 5 (cv3inx Runtime Fix)
    *
    * Production-ready service for all advanced WhatsApp message types.
    * Abstracts raw proto/baileys complexity so commands operate at a
    * clean semantic level.
+   *
+   * ── RUNTIME FIX (cv3inx compatibility) ──────────────────────────────────────
+   * cv3inx's generateWAMessageContent has an `else` catch-all that calls
+   * prepareWAMessageMedia() for any unrecognised top-level key.
+   * Passing { interactiveMessage: {...} } or { listMessage: {...} } directly
+   * to sock.sendMessage() hits that catch-all → "Invalid media type".
+   *
+   * Fix: add `raw: true` to the content object. cv3inx handles this explicitly:
+   *   if (hasNonNullishProperty(message, 'raw')) {
+   *     delete message.raw;
+   *     return message;   ← bypasses prepareWAMessageMedia entirely
+   *   }
+   * The proto-level message object is then forwarded to generateWAMessageFromContent
+   * which correctly identifies interactiveMessage / listMessage via getContentType().
    *
    * ── NativeFlow Interactive Messages ─────────────────────────────────────────
    * sendInteractive()       — NativeFlow interactive message with buttons
@@ -134,6 +148,10 @@
    * Sends a NativeFlow interactive message. Works on both personal and
    * business WhatsApp accounts.
    *
+   * cv3inx fix: `raw: true` is added so generateWAMessageContent skips its
+   * else-catch-all (which calls prepareWAMessageMedia and throws
+   * "Invalid media type" for unrecognised top-level keys).
+   *
    * @param {object} opts
    * @param {string}           [opts.header]             — header text
    * @param {string}           opts.body                 — main body (required)
@@ -148,7 +166,11 @@
       useWebview, messageParamsJson,
     } = opts;
 
+    // raw: true → cv3inx's generateWAMessageContent returns the object directly,
+    // bypassing the else-catch-all that calls prepareWAMessageMedia() and throws
+    // "Invalid media type" for proto-level keys it does not recognise.
     const content = {
+      raw: true,
       interactiveMessage: {
         header: {
           hasMediaAttachment: false,
@@ -163,6 +185,8 @@
         },
       },
     };
+
+    log.debug({ jid, header, btns: btns.length }, '[rich-messages] sendInteractive payload');
 
     try {
       await sock.sendMessage(jid, content, quoted ? { quoted } : {});
@@ -221,6 +245,8 @@
   /**
    * sendList(sock, jid, opts, quoted?) → Promise<void>
    *
+   * cv3inx fix: `raw: true` added — see sendInteractive for explanation.
+   *
    * @param {object} opts
    * @param {string} opts.title        — header title
    * @param {string} opts.description  — body text
@@ -230,17 +256,24 @@
    */
   export async function sendList(sock, jid, opts, quoted) {
     const { title, description, buttonText, footer, sections } = opts;
+
+    // raw: true → bypasses cv3inx else-catch-all → prepareWAMessageMedia not called
+    const content = {
+      raw: true,
+      listMessage: {
+        title, description, buttonText,
+        footerText: footer ?? '',
+        listType:   1, // SINGLE_SELECT
+        sections,
+      },
+    };
+
+    log.debug({ jid, title, sections: sections?.length }, '[rich-messages] sendList payload');
+
     try {
       await sock.sendMessage(
         jid,
-        {
-          listMessage: {
-            title, description, buttonText,
-            footerText: footer ?? '',
-            listType:   1, // SINGLE_SELECT
-            sections,
-          },
-        },
+        content,
         quoted ? { quoted } : {},
       );
     } catch (e) {
@@ -754,4 +787,3 @@
     quickReply,
     singleSelect,
   };
-  
