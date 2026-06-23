@@ -1,17 +1,21 @@
 /**
  * Command: ai
  *
- * Natural-language chat with the Groq-powered AI.
- * Manages per-chat conversation history and supports subcommands.
+ * Natural-language chat via the Phase 6 AI layer.
+ * Supports multiple providers (Groq, Gemini, OpenRouter, Pollinations).
  *
  * Usage:
  *   .ai <message>        — send a message and get a reply
  *   .ai clear            — clear conversation history for this chat
- *   .ai status           — show AI status, model, and history count
+ *   .ai status           — show provider, model, and history info
+ *   .ai provider         — list and switch AI providers
+ *   .ai provider <name>  — switch to a specific provider (owner)
  *   .ai on               — enable AI in this chat (owner only)
  *   .ai off              — disable AI in this chat (owner only)
  *   .ai dmon             — enable passive DM mode (owner only)
  *   .ai dmoff            — disable passive DM mode (owner only)
+ *   .ai personality      — list personalities
+ *   .ai personality <k>  — set personality (owner only)
  *
  * Aliases: gpt, chat, ask
  */
@@ -24,13 +28,17 @@ import {
   isPassiveDMEnabled,
   setAIForChat,
   setPassiveDM,
+  AIManager,
+  initAI,
 } from '../services/ai.js';
 import { aiRateLimiter } from '../services/rate-limiter.js';
-import { config } from '../config/index.js';
+import { config }        from '../config/index.js';
+import { setSetting }    from '../database/store.js';
+import { getPersonalities } from '../services/ai/PromptManager.js';
 
 export const meta = {
   name:        'ai',
-  description: 'Chat with the AI. Use subcommands: clear, status, on, off, dmon, dmoff',
+  description: 'Chat with the AI. Subcommands: clear, status, provider, personality, on, off, dmon, dmoff',
   category:    'ai',
   aliases:     ['gpt', 'chat', 'ask'],
   cooldown:    3,
@@ -40,91 +48,139 @@ export const meta = {
 };
 
 export async function handler(ctx) {
-  const { args, fullArgs, chat: chatJid, sender, pushName, isOwner } = ctx;
+  const { args, chat: chatJid, sender, pushName, isOwner } = ctx;
 
-  // ── Subcommand dispatch ───────────────────────────────────────────────────
+  // Ensure AI system is initialized
+  await initAI();
 
   const sub = args[0]?.toLowerCase();
 
-  // .ai clear / .ai reset
+  // ── .ai clear / .ai reset ─────────────────────────────────────────────────
   if (sub === 'clear' || sub === 'reset') {
     const deleted = clearHistory(chatJid);
     return ctx.reply(`🗑️ Cleared *${deleted}* message(s) from AI history for this chat.`);
   }
 
-  // .ai status
+  // ── .ai status ────────────────────────────────────────────────────────────
   if (sub === 'status') {
     const enabled    = isAIEnabledForChat(chatJid);
     const globalOn   = isAIEnabled();
     const passiveDM  = isPassiveDMEnabled();
     const histCount  = getHistoryCount(chatJid);
-    const hasKey     = !!config.groqApiKey;
+    const providers  = AIManager.getAvailableProviders();
+    const active     = AIManager.getActiveProvider();
+
+    const providerLines = providers.map(p =>
+      `  ${p.active ? '▶' : ' '} *${p.name}* — ${p.displayName}${p.requiresKey ? '' : ' 🆓'}`
+    ).join('\n');
 
     return ctx.reply(
-      `🤖 *AI Status*\n\n` +
-      `• API key:       ${hasKey    ? '✅ configured' : '❌ missing'}\n` +
-      `• Global AI:     ${globalOn  ? '✅ enabled'    : '❌ disabled'}\n` +
-      `• This chat:     ${enabled   ? '✅ enabled'    : '❌ disabled'}\n` +
-      `• Passive DM:    ${passiveDM ? '✅ on'         : '⭕ off'}\n` +
-      `• Model:         ${config.groqModel}\n` +
-      `• History (chat):${histCount} messages`
+      `🤖 *AI Status — Phase 6*\n\n` +
+      `• Global AI:   ${globalOn  ? '✅ enabled'    : '❌ disabled'}\n` +
+      `• This chat:   ${enabled   ? '✅ enabled'    : '❌ disabled'}\n` +
+      `• Passive DM:  ${passiveDM ? '✅ on'         : '⭕ off'}\n` +
+      `• Active:      ${active ?? 'none'}\n` +
+      `• History:     ${histCount} messages\n\n` +
+      `*Available providers:*\n${providerLines || '  (none configured)'}\n\n` +
+      `🆓 = zero API key required`
     );
   }
 
-  // .ai on / .ai off — owner only
+  // ── .ai provider [name] ───────────────────────────────────────────────────
+  if (sub === 'provider') {
+    const target = args[1]?.toLowerCase();
+
+    if (!target) {
+      const providers = AIManager.getAvailableProviders();
+      const active    = AIManager.getActiveProvider();
+      const lines     = providers.map(p =>
+        `${p.active ? '▶' : '•'} *${p.name}* — ${p.displayName}${p.free ? ' (free)' : ''}${p.requiresKey ? '' : ' 🆓'}`
+      );
+      return ctx.reply(
+        `🤖 *AI Providers*\n\n${lines.join('\n') || 'No providers available.'}\n\n` +
+        `Active: *${active ?? 'none'}*\n` +
+        `Use \`.ai provider <name>\` to switch (owner only).`
+      );
+    }
+
+    if (!isOwner) return ctx.reply('👑 Only the bot owner can switch AI providers.');
+    const ok = AIManager.setProvider(target);
+    return ctx.reply(ok
+      ? `✅ AI provider switched to *${target}*.`
+      : `❌ Provider *${target}* is not available. Use \`.ai provider\` to list available providers.`
+    );
+  }
+
+  // ── .ai personality [key] ─────────────────────────────────────────────────
+  if (sub === 'personality') {
+    const key = args[1]?.toLowerCase();
+    const personalities = getPersonalities();
+
+    if (!key) {
+      const lines = personalities.map(p =>
+        `• *${p.key}* — ${p.displayName}`
+      );
+      return ctx.reply(
+        `🎭 *AI Personalities*\n\n${lines.join('\n')}\n\n` +
+        `Use \`.ai personality <key>\` to switch (owner only).`
+      );
+    }
+
+    if (!isOwner) return ctx.reply('👑 Only the bot owner can change the AI personality.');
+    const valid = personalities.find(p => p.key === key);
+    if (!valid) return ctx.reply(`❌ Unknown personality *${key}*. Use \`.ai personality\` to list options.`);
+    setSetting('ai_personality', key);
+    return ctx.reply(`✅ Personality set to *${valid.displayName}*.`);
+  }
+
+  // ── .ai on / .ai off — owner only ─────────────────────────────────────────
   if (sub === 'on' || sub === 'off') {
     if (!isOwner) return ctx.reply('👑 Only the bot owner can change AI settings.');
-    const enable = sub === 'on';
-    setAIForChat(chatJid, enable);
-    return ctx.reply(enable
+    setAIForChat(chatJid, sub === 'on');
+    return ctx.reply(sub === 'on'
       ? '✅ AI chat is now *enabled* for this chat.'
       : '❌ AI chat is now *disabled* for this chat.');
   }
 
-  // .ai dmon / .ai dmoff — owner only
+  // ── .ai dmon / .ai dmoff — owner only ─────────────────────────────────────
   if (sub === 'dmon' || sub === 'dmoff') {
     if (!isOwner) return ctx.reply('👑 Only the bot owner can toggle passive DM mode.');
-    const enable = sub === 'dmon';
-    setPassiveDM(enable);
-    return ctx.reply(enable
-      ? '✅ Passive DM mode *enabled* — I will reply to all DM messages without a prefix.'
+    setPassiveDM(sub === 'dmon');
+    return ctx.reply(sub === 'dmon'
+      ? '✅ Passive DM mode *enabled* — I will reply to all DMs without a prefix.'
       : '⭕ Passive DM mode *disabled* — DMs require the command prefix.');
   }
 
-  // ── Main chat flow ────────────────────────────────────────────────────────
+  // ── Main chat flow ─────────────────────────────────────────────────────────
 
-  // Get prompt (everything after ".ai ")
-  const prompt = sub === undefined
-    ? ''
-    : args.join(' ').trim();
+  const prompt = args.join(' ').trim();
 
   if (!prompt) {
+    const active = AIManager.getActiveProvider();
     return ctx.reply(
       `💬 *${config.botName} AI*\n\n` +
+      `Provider: *${active ?? 'none configured'}*\n\n` +
       `Send me a message and I'll reply!\n\n` +
       `Subcommands:\n` +
       `  • \`${config.prefix}ai clear\` — clear chat history\n` +
       `  • \`${config.prefix}ai status\` — show AI status\n` +
+      `  • \`${config.prefix}ai provider\` — list/switch providers\n` +
+      `  • \`${config.prefix}ai personality\` — change personality\n` +
       `  • \`${config.prefix}ai on/off\` — toggle for this chat (owner)\n` +
-      `  • \`${config.prefix}ai dmon/dmoff\` — toggle passive DMs (owner)`
+      `  • \`${config.prefix}memory\` — manage what I remember about you`
     );
   }
 
-  // Check if AI is enabled for this chat
   if (!isAIEnabledForChat(chatJid)) {
     return ctx.reply('❌ AI chat is currently disabled for this chat.');
   }
 
-  // Rate limit check
   const rl = aiRateLimiter.check(sender, isOwner);
   if (!rl.allowed) {
-    return ctx.reply(`⏳ You're sending messages too fast. Please wait *${rl.resetIn}s* before chatting with AI again.`);
+    return ctx.reply(`⏳ Too fast — please wait *${rl.resetIn}s* before chatting again.`);
   }
 
-  // Typing indicator while we wait for Groq
-  try {
-    await ctx.sock.sendPresenceUpdate('composing', chatJid);
-  } catch { /* best-effort */ }
+  try { await ctx.sock.sendPresenceUpdate('composing', chatJid); } catch { /* best-effort */ }
 
   let result;
   try {
@@ -132,13 +188,10 @@ export async function handler(ctx) {
       senderName: pushName ?? sender,
     });
   } catch (err) {
-    // Clear composing state
     try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
     return ctx.reply(`⚠️ AI error: ${err.message}`);
   }
 
-  // Clear composing state
   try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
-
   await ctx.reply(result.text);
 }
