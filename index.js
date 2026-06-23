@@ -8,6 +8,7 @@ import { useSQLiteAuthState } from './src/database/auth.js';
 import { getBaileysVersion } from './src/core/socket.js';
 import { initConnectionManager, connect, shutdown, getSocket } from './src/core/connection.js';
 import { registerEvents } from './src/events/index.js';
+import { pluginManager } from './src/plugins/loader.js';
 
 async function main() {
   // ── Directories ───────────────────────────────────────────────────────────
@@ -25,8 +26,11 @@ async function main() {
   const version = await getBaileysVersion();
   log.info(`[boot] Baileys: ${version.join('.')}`);
 
+  // ── Plugins (load before banner so count is accurate) ────────────────────
+  const pluginCount = await pluginManager.loadAll();
+
   // ── Banner ────────────────────────────────────────────────────────────────
-  printBanner({ version: config.version, nodeVersion: process.version, pluginCount: 0 });
+  printBanner({ version: config.version, nodeVersion: process.version, pluginCount });
 
   // ── Connection manager ────────────────────────────────────────────────────
   initConnectionManager({
@@ -34,7 +38,7 @@ async function main() {
     saveCreds,
     clearCreds,
     onSocketReady: (sock) => {
-      log.startup('[boot] Socket ready — registering Phase 2 event handlers');
+      log.startup('[boot] Socket ready — registering event handlers');
       try {
         registerEvents(sock);
       } catch (e) {
@@ -48,7 +52,8 @@ async function main() {
   // ── Health server ─────────────────────────────────────────────────────────
   if (config.port > 0) {
     const srv = http.createServer((_, res) => {
-      const s = getSocket();
+      const s       = getSocket();
+      const plugins = pluginManager.getStatus();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status:    'running',
@@ -57,27 +62,30 @@ async function main() {
         connected: !!s,
         jid:       s?.user?.id ?? null,
         uptime:    process.uptime(),
+        plugins,
         ts:        new Date().toISOString(),
       }));
     });
     srv.on('error', e =>
       e.code === 'EADDRINUSE'
-        ? log.warn(`[health] Port ${config.port} busy`)
+        ? log.warn(`[health] Port ${config.port} busy — skipping`)
         : log.error(`[health] ${e.message}`)
     );
-    srv.listen(config.port, () => log.info(`[health] Listening on :${config.port}`));
+    srv.listen(config.port, () =>
+      log.info(`[health] Listening on :${config.port}`)
+    );
   }
 
-  // ── Shutdown handlers ─────────────────────────────────────────────────────
+  // ── Shutdown ──────────────────────────────────────────────────────────────
   const bye = (sig) => {
-    log.warn(`\n[boot] Caught ${sig} — shutting down`);
+    log.warn(`[boot] ${sig} received — shutting down`);
     shutdown();
     process.exit(0);
   };
   process.on('SIGINT',  () => bye('SIGINT'));
   process.on('SIGTERM', () => bye('SIGTERM'));
 
-  // ── Global error guards ───────────────────────────────────────────────────
+  // ── Global safety nets ────────────────────────────────────────────────────
   process.on('uncaughtException',  e => log.error(`[boot] uncaughtException: ${e.message}`));
   process.on('unhandledRejection', r => log.error(`[boot] unhandledRejection: ${r}`));
 }
