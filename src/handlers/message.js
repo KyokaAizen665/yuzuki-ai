@@ -20,6 +20,11 @@ import {
 } from '../services/ai.js';
 import { aiRateLimiter }  from '../services/rate-limiter.js';
 import { isOwner }        from './middleware.js';
+import {
+  sendAIRichResponse,
+  sendReaction,
+  parseAIText,
+} from '../services/rich-messages.js';
 
 // ── Passive DM handler ────────────────────────────────────────────────────────
 
@@ -70,10 +75,22 @@ async function handlePassiveAI(sock, ctx) {
   }
 
   try { await sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
+
+  const parsed = parseAIText(result.text);
+  try { await sendReaction(sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
+
   try {
-    await sock.sendMessage(chatJid, { text: result.text }, { quoted: ctx.rawMessage });
+    await sendAIRichResponse(sock, chatJid, {
+      text:       parsed.text,
+      codeBlocks: parsed.codeBlocks,
+      provider:   result.provider,
+      model:      result.model,
+      tokens:     result.tokens,
+    }, ctx.rawMessage);
   } catch (e) {
     log.error(`[ai:passive] Send error: ${e.message}`);
+    // Final fallback — plain text
+    try { await sock.sendMessage(chatJid, { text: result.text }, { quoted: ctx.rawMessage }); } catch {}
   }
 }
 

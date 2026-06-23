@@ -605,6 +605,125 @@
     }
   }
 
+  // ── AI Text Parser ────────────────────────────────────────────────────────────
+
+  /**
+   * parseAIText(text) → { text, codeBlocks }
+   *
+   * Extracts fenced code blocks (```lang\ncode```) from raw AI response text.
+   * Returns cleaned text (code blocks removed) + array of { language, code }.
+   *
+   * @param {string} rawText
+   * @returns {{ text: string, codeBlocks: { language: string, code: string }[] }}
+   */
+  export function parseAIText(rawText) {
+    if (!rawText) return { text: '', codeBlocks: [] };
+
+    const codeBlocks = [];
+    const CODE_FENCE = /```(\w+)?\n?([\s\S]*?)```/g;
+    let match;
+
+    while ((match = CODE_FENCE.exec(rawText)) !== null) {
+      const lang = match[1]?.trim() || 'text';
+      const code = match[2]?.trim() || '';
+      if (code) codeBlocks.push({ language: lang, code });
+    }
+
+    // Remove code blocks from main text and clean up extra whitespace
+    const cleanText = rawText
+      .replace(/```(\w+)?\n?[\s\S]*?```/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return {
+      text:       cleanText || rawText,
+      codeBlocks,
+    };
+  }
+
+  // ── cv3inx Native AI Rich Response ───────────────────────────────────────────
+
+  /**
+   * sendNativeAIResponse(sock, jid, opts, quoted?) → Promise<void>
+   *
+   * Sends an AIRichResponseMessage using the cv3inx proto format.
+   * Uses proto.AIRichResponseMessage with unifiedResponse (toUnified JSON).
+   * Falls back to sendAIRichResponse() if proto construction fails.
+   *
+   * @param {object} opts  — same shape as sendAIRichResponse
+   */
+  export async function sendNativeAIResponse(sock, jid, opts, quoted) {
+    try {
+      const { proto, generateWAMessageFromContent } = getBaileys();
+
+      // Dynamically import cv3inx rich-message-utils (may not exist in all builds)
+      const richUtils = await import('baileys/lib/Utils/rich-message-utils.js').catch(() => null);
+      const richTypes = await import('baileys/lib/Types/RichType.js').catch(() => null);
+
+      if (!richUtils || !richTypes) throw new Error('rich-message-utils not available');
+
+      const { toUnified, tokenizeCode } = richUtils;
+      const { RichSubMessageType }      = richTypes;
+
+      const submessages = [];
+
+      // Main text block
+      if (opts.text?.trim()) {
+        submessages.push({
+          messageType: RichSubMessageType.TEXT,
+          messageText: opts.text.trim(),
+        });
+      }
+
+      // Code blocks
+      for (const cb of (opts.codeBlocks ?? [])) {
+        const tokenized = tokenizeCode(cb.code, cb.language ?? 'javascript');
+        submessages.push({
+          messageType:  RichSubMessageType.CODE,
+          codeMetadata: {
+            codeLanguage: cb.language ?? 'javascript',
+            codeBlocks:   tokenized?.codeBlocks ?? [],
+          },
+        });
+      }
+
+      if (!submessages.length) throw new Error('No submessages to send');
+
+      const unified = toUnified(submessages);
+
+      const richMsg = proto.AIRichResponseMessage.create({
+        messageType:     1, // AI_RICH_RESPONSE_TYPE_STANDARD
+        unifiedResponse: proto.AIRichResponseUnifiedResponse.create({
+          data: Buffer.from(JSON.stringify(unified)),
+        }),
+      });
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        { richResponseMessage: richMsg },
+        { userJid: sock.user?.id, quoted },
+      );
+
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+
+      // Send suggested prompts as a follow-up interactive if any
+      if (opts.suggestedPrompts?.length) {
+        const actions = opts.suggestedPrompts.slice(0, 3).map((p, i) =>
+          quickReply(p.slice(0, 20), `suggest_${i}`)
+        );
+        await sendInteractive(sock, jid, {
+          body:    `_💡 Continue the conversation:_`,
+          footer:  opts.provider ? `${opts.provider}${opts.model ? ` · ${opts.model}` : ''}` : '',
+          buttons: actions,
+        }, quoted).catch(() => {});
+      }
+
+    } catch (e) {
+      log.debug(`[rich-messages] sendNativeAIResponse proto path failed (${e.message}) — fallback`);
+      await sendAIRichResponse(sock, jid, opts, quoted);
+    }
+  }
+
   // ── Service bundle ────────────────────────────────────────────────────────────
 
   export const RichMessageService = {
@@ -625,6 +744,8 @@
     sendRichResponse,
     // AI
     sendAIRichResponse,
+    sendNativeAIResponse,
+    parseAIText,
     // Button builders
     buttons,
     ctaUrl,

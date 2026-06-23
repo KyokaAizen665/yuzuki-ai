@@ -1,13 +1,19 @@
 /**
  * Command: help
- * Lists all commands or shows details for a specific command.
+ * Premium NativeFlow menu — category list + command detail view.
+ * Uses sendList for the full menu and sendInteractive for command detail.
  */
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
 import { config } from '../config/index.js';
+import {
+  sendList,
+  sendInteractive,
+  quickReply,
+} from '../services/rich-messages.js';
 
 export const meta = {
   name:        'help',
-  description: 'List commands or show help for a specific command',
+  description: 'Browse all commands — interactive category menu',
   category:    'utility',
   aliases:     ['h', 'menu', 'cmds'],
   cooldown:    5,
@@ -16,57 +22,111 @@ export const meta = {
   group:       null,
 };
 
+const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';
+
+const CAT_ICONS = {
+  ai:      '🤖',
+  utility: '🔧',
+  owner:   '👑',
+  general: '📋',
+  fun:     '🎉',
+  info:    'ℹ️',
+  tools:   '🛠️',
+};
+
+function catIcon(cat) {
+  return CAT_ICONS[cat?.toLowerCase()] ?? '📂';
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-function permLabel(meta) {
+function permLabel(m) {
   const flags = [
-    meta.owner   === true  ? 'owner only'    : null,
-    meta.premium === true  ? 'premium only'  : null,
-    meta.group   === true  ? 'group only'    : null,
-    meta.group   === false ? 'private only'  : null,
+    m.owner   === true  ? 'owner only'   : null,
+    m.premium === true  ? 'premium'      : null,
+    m.group   === true  ? 'groups only'  : null,
+    m.group   === false ? 'private only' : null,
   ].filter(Boolean);
-  return flags.length ? flags.join(', ') : 'everyone';
+  return flags.length ? flags.join(' · ') : 'everyone';
 }
 
 export async function handler(ctx) {
-  const { prefix, args } = ctx;
+  const { prefix, args, sock, chat: jid, rawMessage } = ctx;
   const query = args[0]?.toLowerCase().trim();
 
-  // ── Detail view for a specific command ──────────────────────────────────
+  // ── Detail view for a specific command ──────────────────────────────────────
   if (query) {
     const entry = findCommand(query);
     if (!entry) {
-      return ctx.reply(`❌ No command found for \`${prefix}${query}\`\n\nTry \`${prefix}help\` for the full list.`);
+      return sendInteractive(sock, jid, {
+        header:  '❌ Command Not Found',
+        body:    `No command found for \`${prefix}${query}\`\n\nUse the menu below to browse all available commands.`,
+        footer:  BRAND_FOOTER,
+        buttons: [quickReply('📋 Open Menu', 'open_menu')],
+      }, rawMessage);
     }
+
     const { meta: m } = entry;
-    const lines = [
-      `*${prefix}${m.name}*`,
-      `_${m.description ?? 'No description.'}_`,
-      '',
-      `📂 Category : ${capitalize(m.category ?? 'general')}`,
-      `🔗 Aliases  : ${m.aliases?.length ? m.aliases.map(a => `${prefix}${a}`).join(', ') : 'none'}`,
-      `⏱ Cooldown  : ${m.cooldown ?? 0}s`,
-      `🔐 Access   : ${permLabel(m)}`,
-    ];
-    return ctx.reply(lines.join('\n'));
+    const aliasText = m.aliases?.length ? m.aliases.map(a => `${prefix}${a}`).join(', ') : 'none';
+    const body =
+      `${catIcon(m.category)} *${prefix}${m.name}*\n` +
+      `_${m.description ?? 'No description.'}_\n\n` +
+      `📂 Category  : ${capitalize(m.category ?? 'general')}\n` +
+      `🔗 Aliases   : ${aliasText}\n` +
+      `⏱ Cooldown  : ${m.cooldown ?? 0}s\n` +
+      `🔐 Access    : ${permLabel(m)}`;
+
+    return sendInteractive(sock, jid, {
+      header:  prefix + m.name,
+      body,
+      footer:  BRAND_FOOTER,
+      buttons: [
+        quickReply('📋 Back to Menu', 'back_menu'),
+        quickReply(`▶ ${prefix}${m.name}`, `use_${m.name}`),
+      ],
+    }, rawMessage);
   }
 
-  // ── Full menu view ───────────────────────────────────────────────────────
+  // ── Full interactive list menu ───────────────────────────────────────────────
   const cats = getCategoryNames();
-  const lines = [`*${config.botName ?? 'Yuzuki AI'}* — Commands\n`];
 
-  for (const cat of cats) {
+  const sections = cats.map(cat => {
     const cmds = getByCategory(cat);
-    if (!cmds.length) continue;
-    lines.push(`*— ${capitalize(cat)} —*`);
-    for (const { meta: m } of cmds) {
-      lines.push(`  ${prefix}${m.name} — ${m.description ?? ''}`);
-    }
-    lines.push('');
-  }
+    if (!cmds.length) return null;
+    return {
+      title: `${catIcon(cat)} ${capitalize(cat)}`,
+      rows:  cmds.map(({ meta: m }) => ({
+        id:          m.name,
+        title:       `${prefix}${m.name}`,
+        description: (m.description ?? '').slice(0, 72),
+      })),
+    };
+  }).filter(Boolean);
 
-  lines.push(`Use \`${prefix}help <command>\` for details.`);
-  await ctx.reply(lines.join('\n'));
+  const totalCmds = sections.reduce((n, s) => n + s.rows.length, 0);
+
+  try {
+    await sendList(sock, jid, {
+      title:       `${config.botName ?? 'Yuzuki AI'} Commands`,
+      description:
+        `✨ *${totalCmds} commands* across *${sections.length} categories*\n\n` +
+        `Tap any command to see details.\n` +
+        `Or use \`${prefix}help <command>\` directly.`,
+      buttonText:  '📋 Browse Commands',
+      footer:      BRAND_FOOTER,
+      sections,
+    }, rawMessage);
+  } catch {
+    // Graceful plain-text fallback
+    const lines = [`*${config.botName ?? 'Yuzuki AI'}* — Commands\n`];
+    for (const sec of sections) {
+      lines.push(`*${sec.title}*`);
+      for (const row of sec.rows) lines.push(`  ${row.title} — ${row.description}`);
+      lines.push('');
+    }
+    lines.push(`_Use \`${prefix}help <command>\` for details._\n\n${BRAND_FOOTER}`);
+    await ctx.reply(lines.join('\n'));
+  }
 }

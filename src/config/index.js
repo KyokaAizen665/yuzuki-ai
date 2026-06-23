@@ -39,6 +39,10 @@ export const config = Object.freeze({
   // Pollinations — no API key required (always available as fallback)
   pollinationsModel:    process.env.POLLINATIONS_MODEL  ?? 'openai-large',
 
+  // ── Branding / channel ───────────────────────────────────────────────────
+  officialChannelJid:   process.env.OFFICIAL_CHANNEL_JID ?? '',
+  officialChannelUrl:   process.env.OFFICIAL_CHANNEL_URL ?? '',
+
   // ── Paths ────────────────────────────────────────────────────────────────
   sessionDir:           process.env.SESSION_DIR ?? './session',
   dbPath:               process.env.DB_PATH     ?? './database.sqlite',

@@ -1,7 +1,8 @@
 /**
  * Command: ai
  *
- * Natural-language chat via the Phase 6 AI layer.
+ * Natural-language chat — rich AI responses with code detection, reactions,
+ * and suggested prompts. Phase 8 upgrade.
  * Supports multiple providers (Groq, Gemini, OpenRouter, Pollinations).
  *
  * Usage:
@@ -31,10 +32,18 @@ import {
   AIManager,
   initAI,
 } from '../services/ai.js';
-import { aiRateLimiter } from '../services/rate-limiter.js';
-import { config }        from '../config/index.js';
-import { setSetting }    from '../database/store.js';
+import { aiRateLimiter }    from '../services/rate-limiter.js';
+import { config }           from '../config/index.js';
+import { setSetting }       from '../database/store.js';
 import { getPersonalities } from '../services/ai/PromptManager.js';
+import {
+  sendAIRichResponse,
+  sendInteractive,
+  sendReaction,
+  quickReply,
+  ctaUrl,
+  parseAIText,
+} from '../services/rich-messages.js';
 
 export const meta = {
   name:        'ai',
@@ -157,18 +166,22 @@ export async function handler(ctx) {
 
   if (!prompt) {
     const active = AIManager.getActiveProvider();
-    return ctx.reply(
-      `💬 *${config.botName} AI*\n\n` +
-      `Provider: *${active ?? 'none configured'}*\n\n` +
-      `Send me a message and I'll reply!\n\n` +
-      `Subcommands:\n` +
-      `  • \`${config.prefix}ai clear\` — clear chat history\n` +
-      `  • \`${config.prefix}ai status\` — show AI status\n` +
-      `  • \`${config.prefix}ai provider\` — list/switch providers\n` +
-      `  • \`${config.prefix}ai personality\` — change personality\n` +
-      `  • \`${config.prefix}ai on/off\` — toggle for this chat (owner)\n` +
-      `  • \`${config.prefix}memory\` — manage what I remember about you`
-    );
+    const p = config.prefix;
+    return sendInteractive(ctx.sock, chatJid, {
+      header:  `🤖 ${config.botName} AI`,
+      body:
+        `Provider: *${active ?? 'none configured'}*\n\n` +
+        `Just send me a message and I'll reply! Try:\n` +
+        `• _"Explain quantum computing"_\n` +
+        `• _"Write a Python hello world"_\n` +
+        `• _"Summarize machine learning"_`,
+      footer:  '🌸 Yuzuki AI · Powered by cv3inx',
+      buttons: [
+        quickReply('🧹 Clear History', 'ai_clear'),
+        quickReply('📊 AI Status',     'ai_status'),
+        quickReply('🎭 Personalities', 'ai_personality'),
+      ],
+    }, ctx.rawMessage);
   }
 
   if (!isAIEnabledForChat(chatJid)) {
@@ -180,6 +193,8 @@ export async function handler(ctx) {
     return ctx.reply(`⏳ Too fast — please wait *${rl.resetIn}s* before chatting again.`);
   }
 
+  // Signal we received the message
+  try { await sendReaction(ctx.sock, chatJid, ctx.key, '✨'); } catch { /* best-effort */ }
   try { await ctx.sock.sendPresenceUpdate('composing', chatJid); } catch { /* best-effort */ }
 
   let result;
@@ -188,10 +203,28 @@ export async function handler(ctx) {
       senderName: pushName ?? sender,
     });
   } catch (err) {
-    try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
+    try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch {}
+    try { await sendReaction(ctx.sock, chatJid, ctx.key, '❌'); } catch {}
     return ctx.reply(`⚠️ AI error: ${err.message}`);
   }
 
-  try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
-  await ctx.reply(result.text);
+  try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch {}
+  // React: ✅ for normal text, 💻 when response has code
+  const parsed = parseAIText(result.text);
+  try { await sendReaction(ctx.sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
+
+  // Choose suggested prompts based on response type
+  const suggestedPrompts = parsed.codeBlocks.length
+    ? ['Explain this code', 'Improve it', 'Add comments']
+    : ['Continue', 'Explain more', 'Simplify', 'Give example'];
+
+  // Send rich AI response with code detection + suggested prompts
+  await sendAIRichResponse(ctx.sock, chatJid, {
+    text:            parsed.text,
+    codeBlocks:      parsed.codeBlocks,
+    suggestedPrompts,
+    model:           result.model,
+    provider:        result.provider,
+    tokens:          result.tokens,
+  }, ctx.rawMessage);
 }
