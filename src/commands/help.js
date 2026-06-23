@@ -1,15 +1,34 @@
 /**
  * Command: help / menu
  *
- * VALIDATION PHASE — Hero Image Layer
- * Full menu (.menu / .help with no args) sends:
- *   • Hero image  (cv3inx image handler — NOT raw proto, no raw:true needed)
- *   • Caption     (bot name, command count, usage hint)
+ * VALIDATION PHASE 2 — Hero Image + Caption + Buttons
  *
- * No buttons, no NativeFlow, no list, no interactive elements.
- * Confirms cv3inx image pipeline works before layering interactive UI.
+ * cv3inx native API (no raw:true bypass needed):
  *
- * Detail view (.help <command>) is unchanged — still uses sendInteractive.
+ *   sock.sendMessage(jid, {
+ *     image:     { url },      ← first if-else: prepareWAMessageMedia → m.imageMessage
+ *     caption:   '...',        ← nativeFlow handler: body (not text:) + valid header check
+ *     nativeFlow: [...],       ← second if block: prepareNativeFlowButtons
+ *     footer:    '...',
+ *   })
+ *
+ * Flow inside generateWAMessageContent:
+ *   1. hasNonNullishProperty(message, 'image') → TRUE
+ *      → prepareWAMessageMedia({ image: { url } }) → m = { imageMessage: {...} }
+ *   2. hasNonNullishProperty(message, 'nativeFlow') → TRUE (separate if block)
+ *      → caption branch (no 'text' key): hasValidInteractiveHeader(m) → TRUE (imageMessage set)
+ *      → interactiveMessage.header = { hasMediaAttachment: true, ... }
+ *      → Object.assign(interactiveMessage.header, m)  ← merges imageMessage into header
+ *      → interactiveMessage.body = { text: caption }
+ *      → m = { interactiveMessage }
+ *
+ * Button format (cv3inx high-level, NOT raw proto):
+ *   { text: 'label', id: 'payload' }  → quick_reply via prepareNativeFlowButtons
+ *
+ * Buttons (3 max per phase requirement):
+ *   👑 Owner    → id: cmd_owner
+ *   📢 Channel  → id: cmd_channel
+ *   📋 Help     → id: cmd_help
  */
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
@@ -35,9 +54,8 @@ export const meta = {
 const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';
 
 /**
- * Hero image for the menu — direct JPEG, no redirect, no auth.
- * Fetched by cv3inx's prepareWAMessageMedia via the `image` handler
- * (NOT the else-catch-all that caused "Invalid media type").
+ * Hero image — direct JPEG, HTTP 200, no redirect, no auth.
+ * Confirmed working in Phase 1.
  */
 const HERO_IMAGE_URL = 'https://www.gstatic.com/webp/gallery/1.jpg';
 
@@ -51,13 +69,8 @@ const CAT_ICONS = {
   tools:   '🛠️',
 };
 
-function catIcon(cat) {
-  return CAT_ICONS[cat?.toLowerCase()] ?? '📂';
-}
-
-function capitalize(s) {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
+function catIcon(cat)    { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
+function capitalize(s)   { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 function permLabel(m) {
   const flags = [
@@ -76,7 +89,7 @@ export async function handler(ctx) {
   const query = args[0]?.toLowerCase().trim();
 
   // ── Detail view (.help <command>) ─────────────────────────────────────────
-  // Unchanged from original — validates sendInteractive separately.
+  // Unchanged — uses sendInteractive (raw:true path, confirmed working).
   if (query) {
     const entry = findCommand(query);
     if (!entry) {
@@ -112,10 +125,11 @@ export async function handler(ctx) {
     }, rawMessage);
   }
 
-  // ── Full menu (.menu / .help with no args) ────────────────────────────────
-  // VALIDATION PHASE: hero image + caption only.
-  // cv3inx handles { image: { url } } via its dedicated image branch in
-  // generateWAMessageContent → prepareWAMessageMedia({ image: ... }) → no error.
+  // ── Full menu (.menu / .help with no args) ─────────────────────────────────
+  // Phase 2: Hero Image + Caption + 3 Quick-Reply Buttons
+  //
+  // Uses cv3inx's native { image, caption, nativeFlow, footer } API.
+  // No raw:true — image key is processed first-class in generateWAMessageContent.
 
   const cats      = getCategoryNames();
   const sections  = cats
@@ -129,32 +143,45 @@ export async function handler(ctx) {
   const botName = config.botName ?? 'Yuzuki AI';
   const version = config.version ?? '2.0.0';
 
+  // Caption — used as the interactive body (cv3inx: caption key, not text key,
+  // because we have an image header; using text: would skip the header path).
   const caption =
     `🌸 *${botName}*  —  v${version}\n\n` +
     `✨ *${totalCmds} commands*  ·  *${sections.length} categories*\n\n` +
-    `Type \`${prefix}help <command>\` to see details for any command.\n\n` +
-    `${BRAND_FOOTER}`;
+    `Type \`${prefix}help <command>\` to see details for any command.`;
+
+  // 3 quick_reply buttons — cv3inx high-level format { text, id }
+  // prepareNativeFlowButtons maps { id } → name:'quick_reply' + buttonParamsJson
+  const menuButtons = [
+    { text: '👑 Owner',   id: 'cmd_owner'   },
+    { text: '📢 Channel', id: 'cmd_channel' },
+    { text: '📋 Help',    id: 'cmd_help'    },
+  ];
 
   try {
     await sock.sendMessage(
       jid,
       {
-        image:   { url: HERO_IMAGE_URL },
+        image:     { url: HERO_IMAGE_URL },
         caption,
+        nativeFlow: menuButtons,
+        footer:    BRAND_FOOTER,
       },
       rawMessage ? { quoted: rawMessage } : {},
     );
   } catch (e) {
-    // Graceful plain-text fallback so the menu is never silent
+    // Graceful plain-text fallback — menu is never silent on error
     const lines = [
       `*${botName}* — Commands\n`,
       ...sections.map(sec => [
         `*${catIcon(sec.title)} ${capitalize(sec.title)}*`,
-        ...sec.rows.map(({ meta: m }) => `  ${prefix}${m.name} — ${m.description ?? ''}`),
+        ...sec.rows.map(({ meta: m }) =>
+          `  ${prefix}${m.name} — ${m.description ?? ''}`),
         '',
       ]).flat(),
       `_Use \`${prefix}help <command>\` for details._\n\n${BRAND_FOOTER}`,
     ];
-    await sock.sendMessage(jid, { text: lines.join('\n') });
+    await sock.sendMessage(jid, { text: lines.join('\n') },
+      rawMessage ? { quoted: rawMessage } : {});
   }
 }
