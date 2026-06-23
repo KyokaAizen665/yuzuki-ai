@@ -548,7 +548,8 @@
     const { bizJid, id, title } = opts;
     try {
       const { proto, generateWAMessageFromContent } = getBaileys();
-      const shopMsg = proto.Message.InteractiveMessage.ShopStorefrontMessage?.create?.({ bizJid, id })
+      // Correct proto class is ShopMessage (not ShopStorefrontMessage)
+      const shopMsg = proto.Message.InteractiveMessage.ShopMessage?.create?.({ bizJid, id })
                    ?? { bizJid, id };
 
       const msg = generateWAMessageFromContent(

@@ -160,6 +160,56 @@ export function createNewsletterService(sock) {
       assertMethod('newsletterReactMessage');
       return sock.newsletterReactMessage(jid, serverId, reaction ?? null);
     },
+
+    // ── Extended cv3inx-only methods ─────────────────────────────────────────
+
+    /**
+     * adminCount(jid) → number
+     * Returns the number of admins for a newsletter you own.
+     */
+    async adminCount(jid) {
+      assertMethod('newsletterAdminCount');
+      return sock.newsletterAdminCount(jid);
+    },
+
+    /**
+     * changeOwner(jid, newOwnerJid) → void
+     * Transfer ownership of a newsletter to another JID.
+     */
+    async changeOwner(jid, newOwnerJid) {
+      assertMethod('newsletterChangeOwner');
+      log.info(`[newsletter] changeOwner ${jid} → ${newOwnerJid}`);
+      return sock.newsletterChangeOwner(jid, newOwnerJid);
+    },
+
+    /**
+     * demote(jid, userJid) → void
+     * Demote an admin of a newsletter you own.
+     */
+    async demote(jid, userJid) {
+      assertMethod('newsletterDemote');
+      log.info(`[newsletter] demote ${userJid} from ${jid}`);
+      return sock.newsletterDemote(jid, userJid);
+    },
+
+    /**
+     * delete(jid) → void
+     * Permanently delete a newsletter you own. Irreversible.
+     */
+    async delete(jid) {
+      assertMethod('newsletterDelete');
+      log.warn(`[newsletter] delete channel ${jid}`);
+      return sock.newsletterDelete(jid);
+    },
+
+    /**
+     * subscribeUpdates(jid) → void
+     * Subscribe to live updates from a newsletter (real-time message stream).
+     */
+    async subscribeUpdates(jid) {
+      assertMethod('subscribeNewsletterUpdates');
+      return sock.subscribeNewsletterUpdates(jid);
+    },
   };
 }
 
