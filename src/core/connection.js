@@ -1,14 +1,20 @@
 /**
  * Connection Manager — pairing code auth, exponential backoff reconnection.
  *
- * Pairing code flow (fixed):
- *   1. createSocket() → socket created
- *   2. Immediately check !authState.creds.registered
- *   3. Request pairing code (Baileys requires this BEFORE connection opens)
- *   4. User enters code → connection reaches 'open'
+ * Pairing code flow (correct):
+ *   1. createSocket() — printQRInTerminal: false
+ *   2. Baileys establishes WS → WhatsApp sends QR challenge
+ *   3. connection.update fires with { qr: '...' } — WS is now ready
+ *   4. At that point call requestPairingCode() INSTEAD of showing the QR
+ *   5. User enters code in WhatsApp → connection.update fires with open
  *
- * Previous bug: pairing code was requested inside connection==='open', which
- * never fires until AFTER the code is entered — a deadlock.
+ * Bug history:
+ *   v1: requestPairingCode() called in connection==='open' handler (deadlock —
+ *       open only fires AFTER pairing is complete).
+ *   v2: requestPairingCode() called immediately after createSocket() (too early —
+ *       WS not yet established, Baileys throws "Connection Closed").
+ *   v3 (this): requestPairingCode() called when {qr} arrives in connection.update,
+ *       which is the correct signal that the WS is ready for pairing.
  *
  * Disconnect codes: 401=logout 500=badSession 515=restart 428=replaced 408=timeout
  */
@@ -46,28 +52,10 @@ export async function connect(version) {
   log.startup(`[conn] Connecting (${_att + 1})...`);
   _sock = createSocket({ version, authState: _auth });
 
-  // Notify caller so event handlers (registry, services) can be wired up
   if (_ready) try { _ready(_sock); } catch (e) { log.error(`[conn] onReady: ${e.message}`); }
 
   _sock.ev.on('creds.update', async () => await _save());
   _sock.ev.on('connection.update', async u => await _handle(u, version));
-
-  // ── Pairing code — must be requested BEFORE connection opens ──────────────
-  // Baileys signals an unpaired session via creds.registered === false.
-  // We fire this immediately after socket creation; Baileys queues the request
-  // and sends it during the initial WS handshake. connection==='open' fires
-  // only AFTER the user enters the code, so it cannot be used here.
-  if (!_auth.creds.registered && !_pairing) {
-    _pairing = true;
-    try {
-      const phone = config.ownerNumber || await promptPhoneNumber();
-      const code  = await requestPairingCode(_sock, phone);
-      displayPairingCode(code, phone);
-    } catch (e) {
-      log.error(`[pairing] ${e.message}`);
-      _pairing = false;
-    }
-  }
 }
 
 const _delay = a => Math.min(config.reconnectDelay * Math.pow(2, a) + Math.random() * 2000, 60000);
@@ -89,7 +77,22 @@ function _sched(version, ov) {
 }
 
 async function _handle({ connection, lastDisconnect, isNewLogin, qr }, version) {
-  if (qr) log.warn('[conn] Unexpected QR — ensure OWNER_NUMBER is set and pairing code was requested');
+  // ── Pairing code — triggered when WhatsApp sends the QR challenge ──────────
+  // Receiving {qr} means the WebSocket is established and the server is waiting
+  // for auth. Call requestPairingCode() here INSTEAD of displaying the QR.
+  // This is the correct timing — earlier (post-createSocket) the WS isn't ready.
+  if (qr && !_auth.creds.registered && !_pairing) {
+    _pairing = true;
+    log.info('[conn] QR challenge received — requesting pairing code instead');
+    try {
+      const phone = config.ownerNumber || await promptPhoneNumber();
+      const code  = await requestPairingCode(_sock, phone);
+      displayPairingCode(code, phone);
+    } catch (e) {
+      log.error(`[pairing] ${e.message}`);
+      _pairing = false;
+    }
+  }
 
   if (connection === 'connecting') log.info('[conn] Connecting...');
 
@@ -111,11 +114,11 @@ async function _handle({ connection, lastDisconnect, isNewLogin, qr }, version) 
     _pairing = false;
     log.warn(`[conn] Closed code=${code} "${msg}"`);
     switch (code) {
-      case DisconnectReason.loggedOut:           log.error('[auth] Logged out');   _clear(); _sched(version, 3000);  break;
-      case DisconnectReason.badSession:          log.error('[auth] Bad session');  _clear(); _sched(version, 5000);  break;
-      case DisconnectReason.restartRequired:     log.info('[conn] Restart req');             _sched(version, 0);     break;
-      case DisconnectReason.connectionReplaced:  log.warn('[conn] Replaced');                _sched(version, 10000); break;
-      case DisconnectReason.timedOut:            log.warn('[conn] Timeout');                 _sched(version);        break;
+      case DisconnectReason.loggedOut:          log.error('[auth] Logged out');  _clear(); _sched(version, 3000);  break;
+      case DisconnectReason.badSession:         log.error('[auth] Bad session'); _clear(); _sched(version, 5000);  break;
+      case DisconnectReason.restartRequired:    log.info('[conn] Restart req');            _sched(version, 0);     break;
+      case DisconnectReason.connectionReplaced: log.warn('[conn] Replaced');               _sched(version, 10000); break;
+      case DisconnectReason.timedOut:           log.warn('[conn] Timeout');                _sched(version);        break;
       default:
         if (code !== DisconnectReason.loggedOut && !_down) _sched(version);
         else log.error('[conn] Non-recoverable');
