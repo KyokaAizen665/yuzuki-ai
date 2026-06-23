@@ -74,7 +74,7 @@ export async function connect(version) {
   }
 
   _sock.ev.on('creds.update', async () => { try { await _save(); } catch {} });
-  _sock.ev.on('connection.update', async u => _handle(u, version));
+  _sock.ev.on('connection.update', async u => await _handle(u, version));
   // Note: requestPairingCode() is called inside _handle() when {qr} is received,
   // NOT here — the WebSocket must be established first.
 }
