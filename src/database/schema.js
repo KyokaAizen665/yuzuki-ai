@@ -31,4 +31,17 @@ export const SCHEMA_SQL = `
     createdAt TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_ai_history ON ai_history (chatJid, createdAt);
+  CREATE TABLE IF NOT EXISTS ai_memory (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    memoryType TEXT    NOT NULL CHECK(memoryType IN ('user','chat','global')),
+    ownerJid   TEXT,
+    key        TEXT    NOT NULL,
+    value      TEXT    NOT NULL,
+    importance INTEGER NOT NULL DEFAULT 5,
+    expiresAt  TEXT,
+    createdAt  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(memoryType, ownerJid, key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_memory ON ai_memory (memoryType, ownerJid);
 `;
