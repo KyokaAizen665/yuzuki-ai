@@ -43,18 +43,30 @@ export const config = Object.freeze({
   officialChannelJid:   process.env.OFFICIAL_CHANNEL_JID ?? '',
   officialChannelUrl:   process.env.OFFICIAL_CHANNEL_URL ?? '',
 
-  // ── Menu overlay ─────────────────────────────────────────────────────────
-  // Optional banner shown inside the .menu card caption.
-  // Leave MENU_OVERLAY empty (or unset) to disable the overlay entirely.
+  // ── Menu offer overlay ───────────────────────────────────────────────────
+  // Renders as the native WhatsApp offer card (tag icon, title, expiry, code).
+  // cv3inx API: offerText / offerUrl / offerCode / offerExpiration.
+  // Leave MENU_OFFER_TEXT empty (or unset) to disable the offer card entirely.
   //
-  // MENU_OVERLAY_TYPE controls the emoji prefix:
-  //   announcement → 📢   update → 🔄   promo → 🎁   maintenance → 🔧
+  // Usage examples (.env):
+  //   # Announcement
+  //   MENU_OFFER_TEXT=📢 Yuzuki AI v2.1 — now with GPT-4o
   //
-  // Examples (.env):
-  //   MENU_OVERLAY=New AI model added — try .ai now!
-  //   MENU_OVERLAY_TYPE=update
-  menuOverlay:          process.env.MENU_OVERLAY       ?? '',
-  menuOverlayType:      process.env.MENU_OVERLAY_TYPE  ?? 'announcement',
+  //   # Promotion with promo code + 30-day expiry
+  //   MENU_OFFER_TEXT=🎁 Premium — 30 % off this week
+  //   MENU_OFFER_CODE=YUZUKI30
+  //   MENU_OFFER_EXPIRY=1785427200
+  //
+  //   # Maintenance notice
+  //   MENU_OFFER_TEXT=🔧 Scheduled maintenance: Jul 14, 02:00–04:00 UTC
+  //
+  // MENU_OFFER_URL   — optional tap URL (leave empty for pure text card)
+  // MENU_OFFER_CODE  — optional copy/promo code shown as "Code: …"
+  // MENU_OFFER_EXPIRY — optional unix timestamp (seconds) shown as "Ends on …"
+  menuOfferText:        process.env.MENU_OFFER_TEXT   ?? '',
+  menuOfferUrl:         process.env.MENU_OFFER_URL    ?? '',
+  menuOfferCode:        process.env.MENU_OFFER_CODE   ?? '',
+  menuOfferExpiry:      process.env.MENU_OFFER_EXPIRY ?? '',
 
   // ── Paths ────────────────────────────────────────────────────────────────
   sessionDir:           process.env.SESSION_DIR ?? './session',
