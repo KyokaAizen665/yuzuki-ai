@@ -43,6 +43,19 @@ export const config = Object.freeze({
   officialChannelJid:   process.env.OFFICIAL_CHANNEL_JID ?? '',
   officialChannelUrl:   process.env.OFFICIAL_CHANNEL_URL ?? '',
 
+  // ── Menu overlay ─────────────────────────────────────────────────────────
+  // Optional banner shown inside the .menu card caption.
+  // Leave MENU_OVERLAY empty (or unset) to disable the overlay entirely.
+  //
+  // MENU_OVERLAY_TYPE controls the emoji prefix:
+  //   announcement → 📢   update → 🔄   promo → 🎁   maintenance → 🔧
+  //
+  // Examples (.env):
+  //   MENU_OVERLAY=New AI model added — try .ai now!
+  //   MENU_OVERLAY_TYPE=update
+  menuOverlay:          process.env.MENU_OVERLAY       ?? '',
+  menuOverlayType:      process.env.MENU_OVERLAY_TYPE  ?? 'announcement',
+
   // ── Paths ────────────────────────────────────────────────────────────────
   sessionDir:           process.env.SESSION_DIR ?? './session',
   dbPath:               process.env.DB_PATH     ?? './database.sqlite',
