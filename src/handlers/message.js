@@ -1,5 +1,5 @@
 /**
- * Message Handler Pipeline — Phase 5
+ * Message Handler Pipeline — Phase 5 / Phase 7 hardened
  *
  * Flow:
  *   ctx → filters → DB touch → stat → auto-read → auto-typing
@@ -26,9 +26,6 @@ import { isOwner }        from './middleware.js';
 /**
  * handlePassiveAI(sock, ctx) — called when a non-prefixed DM arrives
  * and passive mode is active.
- *
- * Uses the same rate limiter as the .ai command to prevent abuse.
- * Applies per-chat AI toggle (user could have disabled via .ai off).
  */
 async function handlePassiveAI(sock, ctx) {
   const { chat: chatJid, sender, pushName, body } = ctx;
@@ -40,14 +37,11 @@ async function handlePassiveAI(sock, ctx) {
   const rl     = aiRateLimiter.check(sender, exempt);
 
   if (!rl.allowed) {
-    // Silent throttle in passive mode — no error reply (too noisy)
     log.debug(`[ai:passive] Rate-limited ${sender}`);
     return;
   }
 
-  try {
-    await sock.sendPresenceUpdate('composing', chatJid);
-  } catch { /* best-effort */ }
+  try { await sock.sendPresenceUpdate('composing', chatJid); } catch { /* best-effort */ }
 
   let result;
   try {
@@ -57,10 +51,20 @@ async function handlePassiveAI(sock, ctx) {
   } catch (err) {
     log.error(`[ai:passive] Chat error for ${sender}: ${err.message}`);
     try { await sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
-    // In passive mode, only reply with an error if it's a config issue (no key)
-    if (err.message.includes('GROQ_API_KEY')) {
-      try { await sock.sendMessage(chatJid, { text: '⚠️ AI is not configured yet.' }, { quoted: ctx.rawMessage }); }
-      catch { /* ok */ }
+
+    // Only surface an error to the user when it's a configuration problem
+    // (not a transient network/provider failure — those are too noisy in passive mode)
+    const isConfigErr = err.message.includes('No AI providers') ||
+                        err.message.includes('API key') ||
+                        err.message.includes('not configured');
+    if (isConfigErr) {
+      try {
+        await sock.sendMessage(
+          chatJid,
+          { text: '⚠️ AI is not configured. Ask the bot owner to set up an API key.' },
+          { quoted: ctx.rawMessage }
+        );
+      } catch { /* ok */ }
     }
     return;
   }
@@ -118,12 +122,6 @@ export async function handleMessage(sock, ctx) {
     }
 
     // ── 7. Passive AI DM trigger ──────────────────────────────────────────
-    //
-    // Only fires when:
-    //   a) The message is from someone else (not fromMe)
-    //   b) It is a private DM (not a group)
-    //   c) Passive DM mode is enabled globally
-    //   d) There is actual text content
     if (
       !ctx.fromMe     &&
       !ctx.isGroup    &&
