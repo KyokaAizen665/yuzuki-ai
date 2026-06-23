@@ -55,8 +55,11 @@ async function main() {
 
   // ── 1. Config validation ─────────────────────────────────────────────────
   const validation = validateStartup(config);
-  printValidation(validation);
-  // Non-fatal: we continue even with issues, but the operator is informed.
+  const configOk = printValidation(validation);
+  if (!configOk) {
+    log.error('[boot] Aborting — fix the critical configuration errors above, then restart.');
+    process.exit(1);
+  }
 
   // ── 2. Directories ────────────────────────────────────────────────────────
   ensureDir(config.sessionDir);
