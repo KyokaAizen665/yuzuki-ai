@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Auth / session — NEVER bake into image; use volumes at runtime
+session/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-backup-*
+
+# Secrets — never bake into image
+.env
+.env.*
+!.env.example
+
+# Logs — runtime artefacts, not needed in image
+logs/
+*.log
+
+# Temp files
+temp/
+tmp/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev artefacts
+node_modules/.cache/
+
+# Docs / CI
+*.md
+!README.md
+.github/
