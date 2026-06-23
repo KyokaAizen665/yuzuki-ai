@@ -1,38 +1,93 @@
 #!/usr/bin/env node
+/**
+ * Yuzuki AI — Entry point
+ *
+ * Phase 7 hardened startup sequence:
+ *   1. Config validation (warn/error before anything starts)
+ *   2. Directory setup
+ *   3. Database init + integrity check
+ *   4. Auth state setup
+ *   5. Plugin load
+ *   6. Banner
+ *   7. Connection manager + socket
+ *   8. Health server (enhanced diagnostics)
+ *   9. Graceful shutdown (DB close + WAL checkpoint)
+ *  10. Global error safety nets (log stack traces, never silently crash)
+ */
 import http from 'http';
-import { config } from './src/config/index.js';
-import { log, printBanner } from './src/utils/logger.js';
-import { ensureDir } from './src/utils/helpers.js';
-import { initDatabase } from './src/database/index.js';
+import { config }            from './src/config/index.js';
+import { log, printBanner }  from './src/utils/logger.js';
+import { validateStartup, printValidation } from './src/utils/validate.js';
+import { ensureDir }         from './src/utils/helpers.js';
+import {
+  initDatabase,
+  checkIntegrity,
+  closeDatabase,
+}                            from './src/database/index.js';
 import { useSQLiteAuthState } from './src/database/auth.js';
-import { getBaileysVersion } from './src/core/socket.js';
-import { initConnectionManager, connect, shutdown, getSocket } from './src/core/connection.js';
-import { registerEvents } from './src/events/index.js';
-import { pluginManager } from './src/plugins/loader.js';
+import { getBaileysVersion }  from './src/core/socket.js';
+import {
+  initConnectionManager,
+  connect,
+  shutdown,
+}                            from './src/core/connection.js';
+import { registerEvents }    from './src/events/index.js';
+import { pluginManager }     from './src/plugins/loader.js';
+import { getHealth, getHealthSummary } from './src/services/health.js';
+
+// ── Shutdown orchestrator ─────────────────────────────────────────────────────
+
+let _shuttingDown = false;
+
+function gracefulShutdown(sig) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+
+  log.warn(`[boot] ${sig} received — shutting down`);
+  try { shutdown(); } catch (e) { log.error(`[boot] Shutdown error: ${e.message}`); }
+  try { closeDatabase(); } catch (e) { log.error(`[boot] DB close error: ${e.message}`); }
+  process.exit(0);
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // ── Directories ───────────────────────────────────────────────────────────
+
+  // ── 1. Config validation ─────────────────────────────────────────────────
+  const validation = validateStartup(config);
+  printValidation(validation);
+  // Non-fatal: we continue even with issues, but the operator is informed.
+
+  // ── 2. Directories ────────────────────────────────────────────────────────
   ensureDir(config.sessionDir);
   ensureDir(config.tempDir);
   ensureDir(config.logsDir);
 
-  // ── Database ──────────────────────────────────────────────────────────────
+  // ── 3. Database ───────────────────────────────────────────────────────────
   initDatabase(config.dbPath);
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
+  const integrity = checkIntegrity();
+  if (!integrity.ok) {
+    log.error(`[db] Integrity check FAILED: ${integrity.result ?? integrity.error}`);
+    log.warn('[db] Continuing with potentially degraded database');
+  } else {
+    log.db('[db] Integrity check passed');
+  }
+
+  // ── 4. Auth ───────────────────────────────────────────────────────────────
   const { state: authState, saveCreds, clearCreds } = useSQLiteAuthState(config.dbPath);
 
-  // ── Baileys version ───────────────────────────────────────────────────────
+  // ── 5. Baileys version ────────────────────────────────────────────────────
   const version = await getBaileysVersion();
   log.info(`[boot] Baileys: ${version.join('.')}`);
 
-  // ── Plugins (load before banner so count is accurate) ────────────────────
+  // ── 6. Plugins ────────────────────────────────────────────────────────────
   const pluginCount = await pluginManager.loadAll();
 
-  // ── Banner ────────────────────────────────────────────────────────────────
+  // ── 7. Banner ─────────────────────────────────────────────────────────────
   printBanner({ version: config.version, nodeVersion: process.version, pluginCount });
 
-  // ── Connection manager ────────────────────────────────────────────────────
+  // ── 8. Connection manager ─────────────────────────────────────────────────
   initConnectionManager({
     authState,
     saveCreds,
@@ -43,51 +98,66 @@ async function main() {
         registerEvents(sock);
       } catch (e) {
         log.error(`[boot] Failed to register events: ${e.message}`);
+        // Non-fatal: socket is open but events are partially registered
       }
     },
   });
 
   await connect(version);
 
-  // ── Health server ─────────────────────────────────────────────────────────
+  // ── 9. Health server ──────────────────────────────────────────────────────
   if (config.port > 0) {
-    const srv = http.createServer((_, res) => {
-      const s       = getSocket();
-      const plugins = pluginManager.getStatus();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status:    'running',
-        bot:       config.botName,
-        version:   config.version,
-        connected: !!s,
-        jid:       s?.user?.id ?? null,
-        uptime:    process.uptime(),
-        plugins,
-        ts:        new Date().toISOString(),
-      }));
+    const srv = http.createServer((req, res) => {
+      try {
+        // GET /health/summary → one-line text (for simple uptime monitors)
+        if (req.url === '/health/summary') {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(getHealthSummary());
+          return;
+        }
+
+        // GET / or /health → full JSON diagnostics
+        const health = getHealth();
+        const statusCode = health.connection.connected ? 200 : 503;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(health, null, 2));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'error', error: e.message }));
+      }
     });
+
     srv.on('error', e =>
       e.code === 'EADDRINUSE'
-        ? log.warn(`[health] Port ${config.port} busy — skipping`)
-        : log.error(`[health] ${e.message}`)
+        ? log.warn(`[health] Port ${config.port} busy — health server disabled`)
+        : log.error(`[health] Server error: ${e.message}`)
     );
-    srv.listen(config.port, () =>
-      log.info(`[health] Listening on :${config.port}`)
-    );
+
+    srv.listen(config.port, () => {
+      log.info(`[health] Listening on :${config.port} (GET / for diagnostics, /health/summary for uptime check)`);
+    });
   }
 
-  // ── Shutdown ──────────────────────────────────────────────────────────────
-  const bye = (sig) => {
-    log.warn(`[boot] ${sig} received — shutting down`);
-    shutdown();
-    process.exit(0);
-  };
-  process.on('SIGINT',  () => bye('SIGINT'));
-  process.on('SIGTERM', () => bye('SIGTERM'));
+  // ── 10. Signal handlers ───────────────────────────────────────────────────
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-  // ── Global safety nets ────────────────────────────────────────────────────
-  process.on('uncaughtException',  e => log.error(`[boot] uncaughtException: ${e.message}`));
-  process.on('unhandledRejection', r => log.error(`[boot] unhandledRejection: ${r}`));
+  // ── 11. Global safety nets ────────────────────────────────────────────────
+  process.on('uncaughtException', (e) => {
+    log.error(`[boot] uncaughtException: ${e.message}`);
+    if (config.debug) log.debug(`[boot] Stack: ${e.stack}`);
+    // Don't exit — the bot stays up and tries to recover
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    log.error(`[boot] unhandledRejection: ${msg}`);
+    if (config.debug && reason instanceof Error) log.debug(`[boot] Stack: ${reason.stack}`);
+  });
 }
 
-main().catch(e => { console.error('[FATAL]', e); process.exit(1); });
+main().catch(e => {
+  console.error('[FATAL]', e.message);
+  if (config?.debug) console.error(e.stack);
+  process.exit(1);
+});
