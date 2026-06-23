@@ -4,6 +4,7 @@
  * Flow:
  *   ctx → filters → DB touch → stat → auto-read → auto-typing
  *       → command routing (prefixed messages)
+ *       → button response routing (interactiveResponseMessage)
  *       → passive AI DM trigger (non-prefixed DMs, when enabled)
  *
  * handleMessage() is always async and never throws to its caller.
@@ -12,6 +13,7 @@ import { log }            from '../utils/logger.js';
 import { touchUser }      from '../database/store.js';
 import { incrementStat }  from '../database/store.js';
 import { routeCommand }   from './command.js';
+import { routeButtonResponse } from './button.js';
 import { config }         from '../config/index.js';
 import {
   chat,
@@ -57,8 +59,6 @@ async function handlePassiveAI(sock, ctx) {
     log.error(`[ai:passive] Chat error for ${sender}: ${err.message}`);
     try { await sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
 
-    // Only surface an error to the user when it's a configuration problem
-    // (not a transient network/provider failure — those are too noisy in passive mode)
     const isConfigErr = err.message.includes('No AI providers') ||
                         err.message.includes('API key') ||
                         err.message.includes('not configured');
@@ -89,7 +89,6 @@ async function handlePassiveAI(sock, ctx) {
     }, ctx.rawMessage);
   } catch (e) {
     log.error(`[ai:passive] Send error: ${e.message}`);
-    // Final fallback — plain text
     try { await sock.sendMessage(chatJid, { text: result.text }, { quoted: ctx.rawMessage }); } catch {}
   }
 }
@@ -132,13 +131,23 @@ export async function handleMessage(sock, ctx) {
       } catch { /* best-effort */ }
     }
 
-    // ── 6. Command routing (prefixed messages) ────────────────────────────
+    // ── 6. Command routing (prefixed messages) ─────────────────────────────
     if (ctx.body?.startsWith(config.prefix)) {
       await routeCommand(sock, ctx);
       return true;
     }
 
-    // ── 7. Passive AI DM trigger ──────────────────────────────────────────
+    // ── 6b. Button response routing ────────────────────────────────────────
+    // interactiveResponseMessage.nativeFlowResponseMessage arrives with
+    // ctx.contentType === 'interactiveResponseMessage' and
+    // ctx.body === paramsJson string (from serializers/message.js).
+    // Must sit BEFORE the passive AI trigger — button payloads are not DMs.
+    if (ctx.contentType === 'interactiveResponseMessage' && !ctx.fromMe) {
+      await routeButtonResponse(sock, ctx);
+      return true;
+    }
+
+    // ── 7. Passive AI DM trigger ───────────────────────────────────────────
     if (
       !ctx.fromMe     &&
       !ctx.isGroup    &&
