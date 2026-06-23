@@ -6,7 +6,7 @@ dotenv.config({ path: path.resolve(__d, '../../.env') });
 const num  = (v,d) => { const n=parseInt(v,10); return Number.isFinite(n)?n:d; };
 const bool = (v,d) => v==='true'?true:v==='false'?false:d;
 export const config = Object.freeze({
-  ownerNumber:          process.env.OWNER_NUMBER?.replace(/\D/g,'')??\'\',
+  ownerNumber:          process.env.OWNER_NUMBER?.replace(/\D/g,'')??'',
   botName:              process.env.BOT_NAME     ??'Yuzuki AI',
   prefix:               process.env.PREFIX       ??'.',
   version:              process.env.VERSION      ??'2.0.0',
