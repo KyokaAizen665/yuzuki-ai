@@ -11,10 +11,12 @@
  */
 import {
   sendInteractive,
+  sendInteractiveWithImage,
   ctaCall,
   ctaUrl,
   quickReply,
 } from '../services/rich-messages.js';
+import { getRandomHeroImage } from '../services/hero-images.js';
 import { config } from '../config/index.js';
 
 export const meta = {
@@ -51,8 +53,9 @@ export async function handler(ctx) {
     `Tap *Call Owner* below to start a native WhatsApp call, or message the owner directly.\n\n` +
     (ownerNum ? `Owner number: *+${ownerNum}*` : `_Contact details not configured._`);
 
-  await sendInteractive(sock, jid, {
+  await sendInteractiveWithImage(sock, jid, {
     header:  '👑 Contact Owner',
+    image:   getRandomHeroImage('owner'),
     body,
     footer:  BRAND_FOOTER,
     buttons,
