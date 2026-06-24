@@ -31,9 +31,7 @@ export const meta = {
   category:    'ai',
   aliases:     ['gem', 'bard'],
   cooldown:    4,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 const BRAND_FOOTER = 'Yuzuki AI • Google Gemini';

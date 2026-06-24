@@ -27,9 +27,7 @@ export const meta = {
   category:    'ai',
   aliases:     ['mem', 'remember'],
   cooldown:    3,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 export async function handler(ctx) {

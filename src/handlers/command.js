@@ -18,11 +18,11 @@ import { findCommand } from '../plugins/registry.js';
 import { config }      from '../config/index.js';
 import { incrementStat } from '../database/store.js';
 import {
-  checkPermissions,
+  checkPermission,
   checkCooldown,
   setCooldown,
   isOwner,
-} from './middleware.js';
+} from './permissions.js';
 
 // ── Context builder ───────────────────────────────────────────────────────────
 
@@ -115,8 +115,8 @@ export async function routeCommand(sock, ctx) {
 
     log.cmd(`[cmd] ${resolvedName}(${args.join(' ')}) | ${ctx.sender} in ${ctx.chat}`);
 
-    // ── Step 2: permission check ───────────────────────────────────────────
-    const perm = checkPermissions(ctx, meta);
+    // ── Step 2: permission check (unified — covers text, sticker, button) ──
+    const perm = await checkPermission(meta, ctx, sock);
     if (!perm.allowed) {
       log.warn(`[cmd:deny] ${resolvedName} → ${ctx.sender} — ${perm.reason}`);
       try {

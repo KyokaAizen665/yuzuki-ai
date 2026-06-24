@@ -29,9 +29,7 @@ export const meta = {
   category:    'utility',
   aliases:     ['newsletter', 'nl'],
   cooldown:    5,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;

@@ -20,9 +20,7 @@ export const meta = {
   category:    'fun',
   aliases:     ['brat', 'stick', 's2', 'toimg', 's2i'],
   cooldown:    5,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 // ── Brat sticker ──────────────────────────────────────────────────────────────

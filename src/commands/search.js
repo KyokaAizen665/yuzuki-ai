@@ -30,9 +30,7 @@ export const meta = {
   category:    'tools',
   aliases:     ['s', 'find', 'web', 'wiki', 'news'],
   cooldown:    5,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 // ── DuckDuckGo Instant Answer ─────────────────────────────────────────────────

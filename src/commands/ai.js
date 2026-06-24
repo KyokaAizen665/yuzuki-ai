@@ -64,9 +64,7 @@ export const meta = {
   category:    'ai',
   aliases:     ['gpt', 'chat', 'ask'],
   cooldown:    3,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 // ── Task subcommands (wires buildTaskPrompt) ──────────────────────────────────

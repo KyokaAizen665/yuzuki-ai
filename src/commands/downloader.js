@@ -39,9 +39,7 @@ export const meta = {
   category:    'downloader',
   aliases:     ['yt', 'yta', 'tt', 'ig', 'tw', 'pin', 'sc', 'download'],
   cooldown:    10,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 // ── Cobalt API ────────────────────────────────────────────────────────────────

@@ -13,9 +13,7 @@ export const meta = {
   category:    'owner',
   aliases:     ['rl'],
   cooldown:    10,
-  owner:       true,   // middleware enforces this — no inline check needed
-  premium:     false,
-  group:       null,
+  permission:  'owner',
 };
 
 export async function handler(ctx) {

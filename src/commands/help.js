@@ -37,9 +37,7 @@ export const meta = {
   category:    'utility',
   aliases:     ['h', 'menu', 'cmds'],
   cooldown:    5,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 // ── Brand ─────────────────────────────────────────────────────────────────────

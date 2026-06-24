@@ -10,9 +10,7 @@ export const meta = {
   category:    'utility',
   aliases:     ['p'],
   cooldown:    3,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';

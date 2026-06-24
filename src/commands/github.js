@@ -33,9 +33,7 @@ export const meta = {
   category:    'tools',
   aliases:     ['github', 'git'],
   cooldown:    5,
-  owner:       false,
-  premium:     false,
-  group:       null,
+  permission:  'public',
 };
 
 const GH_API  = 'https://api.github.com';

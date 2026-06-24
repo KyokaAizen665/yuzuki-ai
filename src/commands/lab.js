@@ -63,9 +63,7 @@ export const meta = {
   category:    'owner',
   aliases:     ['laboratory', 'msglab'],
   cooldown:    3,
-  owner:       true,
-  premium:     false,
-  group:       null,
+  permission:  'owner',
 };
 
 const BRAND_FOOTER = `🔬 ${config.botName ?? 'Yuzuki AI'} Lab`;
