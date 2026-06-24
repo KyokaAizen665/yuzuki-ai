@@ -39,11 +39,13 @@ import { getPersonalities } from '../services/ai/PromptManager.js';
 import {
   sendAIRichResponse,
   sendInteractive,
+  sendInteractiveWithImage,
   sendReaction,
   quickReply,
   ctaUrl,
   parseAIText,
 } from '../services/rich-messages.js';
+import { getRandomHeroImage } from '../services/hero-images.js';
 
 export const meta = {
   name:        'ai',
@@ -167,15 +169,16 @@ export async function handler(ctx) {
   if (!prompt) {
     const active = AIManager.getActiveProvider();
     const p = config.prefix;
-    return sendInteractive(ctx.sock, chatJid, {
+    return sendInteractiveWithImage(ctx.sock, chatJid, {
       header:  `🤖 ${config.botName} AI`,
+      image:   getRandomHeroImage('ai'),
       body:
         `Provider: *${active ?? 'none configured'}*\n\n` +
         `Just send me a message and I'll reply! Try:\n` +
         `• _"Explain quantum computing"_\n` +
         `• _"Write a Python hello world"_\n` +
         `• _"Summarize machine learning"_`,
-      footer:  '🌸 Yuzuki AI · Powered by cv3inx',
+      footer:  `🌸 ${config.botName ?? 'Yuzuki AI'}`,
       buttons: [
         quickReply('🧹 Clear History', 'ai_clear'),
         quickReply('📊 AI Status',     'ai_status'),
