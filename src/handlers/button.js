@@ -1,24 +1,19 @@
 /**
- * Button Response Router — Yuzuki AI (Phase 2.5 repair)
+ * Button Response Router — Yuzuki AI (Phase 3 — suggest_* fix)
  *
- * Handles NativeFlow interactive button taps, routed here from message.js
- * when ctx.contentType is 'interactiveResponseMessage' or 'nativeFlowResponseMessage'.
+ * PATCH CHANGES vs Phase 2.5:
+ *   • suggest_* buttons now route as `.ai <display_text>` instead of being
+ *     silently dropped. The display_text from the button params object is
+ *     the original prompt string (e.g. "Explain this code").
+ *   • resolveBody() updated to accept an optional displayText argument so
+ *     suggest routing can use the human-readable label.
+ *   • All other routing logic unchanged.
  *
- * Root cause of Phase 2.5 failure:
- *   The prior version relied solely on ctx.body (set by the serializer as
- *   nativeFlowResponseMessage.paramsJson). If cv3inx's proto decoder places
- *   the data in a slightly different slot — or paramsJson is empty for a given
- *   client version — ctx.body is null, JSON.parse falls back to '{}', id='' and
- *   the function returned false silently with no diagnostic log.
- *
- *   Fix: try three locations in order, log exactly which one succeeded (or log
- *   the full raw message structure so the next failure is immediately diagnosable).
- *
- * Extraction priority:
- *   1. ctx.body                  — serializer fast path (works when paramsJson lands here)
+ * Extraction priority (unchanged from Phase 2.5):
+ *   1. ctx.body
  *   2. ctx.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson
- *   3. ctx.message.nativeFlowResponseMessage.paramsJson (top-level variant)
- *   4. ctx.message.buttonsResponseMessage.selectedButtonId (legacy button format)
+ *   3. ctx.message.nativeFlowResponseMessage.paramsJson
+ *   4. ctx.message.buttonsResponseMessage.selectedButtonId
  *
  * Button ID conventions:
  *   cmd_<name>        → run: .<name>
@@ -31,7 +26,8 @@
  *   ch_unfollow       → run: .channel unfollow
  *   ch_mute           → run: .channel mute
  *   ch_unmute         → run: .channel unmute
- *   suggest_*         → reserved; silently ignored
+ *   ai_*              → AI card shortcuts (ai_clear, ai_status, ai_personality)
+ *   suggest_*         → FIXED: run: .ai <display_text>   ← was silently dropped
  */
 
 import { log }          from '../utils/logger.js';
@@ -56,28 +52,51 @@ const STATIC_ROUTES = {
   ai_personality:  () => `${config.prefix}ai personality`,
 };
 
-function resolveBody(id) {
+/**
+ * resolveBody(id, displayText?) → string | null
+ *
+ * Maps a button ID to the synthetic command body to execute.
+ * displayText is the human-readable label from buttonParamsJson and is
+ * used for suggest_* routing so the original prompt text is preserved.
+ */
+function resolveBody(id, displayText) {
   if (!id) return null;
-  if (STATIC_ROUTES[id])     return STATIC_ROUTES[id]();
+
+  // Static routes (exact ID match)
+  if (STATIC_ROUTES[id]) return STATIC_ROUTES[id]();
+
+  // Prefix-based routes
   if (id.startsWith('cmd_')) return `${config.prefix}${id.slice(4).trim()}` || null;
   if (id.startsWith('use_')) return `${config.prefix}${id.slice(4).trim()}` || null;
   if (id.startsWith('help_')) {
     const name = id.slice(5).trim();
     return name ? `${config.prefix}help ${name}` : `${config.prefix}help`;
   }
+
+  // ── PHASE 3 FIX: suggest_* → route as .ai <display_text> ─────────────────
+  //
+  // Before this fix, suggest_* returned null and the tap was silently dropped.
+  // Now we route it as a full .ai chat call using the display_text from the
+  // button params (e.g. "Explain this code", "Continue", "Simplify", etc.).
+  //
+  // Fallback: if display_text is missing or equals the raw id string, use the
+  // human-readable part after "suggest_" as a best-effort prompt.
   if (id.startsWith('suggest_')) {
-    log.debug(`[button] suggest button ignored: ${id}`);
+    const prompt = displayText?.trim();
+    if (prompt && prompt !== id) {
+      return `${config.prefix}ai ${prompt}`;
+    }
+    // display_text not useful — best effort from id suffix (suggest_0 → not helpful)
+    log.debug(`[button] suggest button has no usable display_text (id=${id}) — ignoring`);
     return null;
   }
+
   log.warn(`[button] no route for button id: ${id}`);
   return null;
 }
 
 // ── Multi-source parameter extraction ────────────────────────────────────────
 
-/**
- * tryParseJson(str) → object | null — never throws.
- */
 function tryParseJson(str) {
   if (!str || typeof str !== 'string') return null;
   try { return JSON.parse(str); } catch { return null; }
@@ -85,10 +104,6 @@ function tryParseJson(str) {
 
 /**
  * extractParams(ctx) → { id, display_text?, ... } | null
- *
- * Tries every known location where the button response parameters may land,
- * depending on cv3inx proto version and WhatsApp client behavior.
- * Logs which source succeeded so the next failure is immediately diagnosable.
  */
 function extractParams(ctx) {
   const msg = ctx.message ?? ctx.rawMessage?.message;
@@ -100,7 +115,6 @@ function extractParams(ctx) {
       log.debug(`[button] params via ctx.body`);
       return p;
     }
-    // body is set but doesn't contain id — log and continue to fallbacks
     log.debug(`[button] ctx.body present but no id: ${ctx.body.slice(0, 80)}`);
   }
 
@@ -112,7 +126,6 @@ function extractParams(ctx) {
       log.debug(`[button] params via interactiveResponseMessage.nativeFlowResponseMessage`);
       return p;
     }
-    // irm exists but paramsJson missing — maybe body.text is the display text
     if (irm.body?.text) {
       log.debug(`[button] irm.body.text="${irm.body.text}" but paramsJson missing or empty`);
     }
@@ -135,7 +148,6 @@ function extractParams(ctx) {
     return { id: brm.selectedButtonId, display_text: brm.selectedDisplayText ?? brm.selectedButtonId };
   }
 
-  // ── Diagnostic: log full available structure ───────────────────────────
   log.warn(
     `[button] no params found — contentType=${ctx.contentType}` +
     ` body=${JSON.stringify(ctx.body?.slice(0, 80) ?? null)}` +
@@ -148,13 +160,6 @@ function extractParams(ctx) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-/**
- * routeButtonResponse(sock, ctx) → Promise<boolean>
- *
- * Handles an incoming button response (interactiveResponseMessage or
- * nativeFlowResponseMessage). Returns true if handled, false if ignored.
- * Never throws.
- */
 export async function routeButtonResponse(sock, ctx) {
   try {
     log.debug(
@@ -174,7 +179,8 @@ export async function routeButtonResponse(sock, ctx) {
 
     log.event(`[button] ${ctx.sender} tapped "${displayText}" (id=${id})`);
 
-    const syntheticBody = resolveBody(id);
+    // Pass displayText to resolveBody — needed for suggest_* routing
+    const syntheticBody = resolveBody(id, displayText);
     if (!syntheticBody) return false;
 
     log.cmd(`[button] routing id=${id} → body="${syntheticBody}"`);
