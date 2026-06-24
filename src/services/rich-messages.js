@@ -699,8 +699,9 @@
    * @returns {{ text: string, codeBlocks: { language: string, code: string }[] }}
    */
   export function parseAIText(rawText) {
-    if (!rawText) return { text: '', codeBlocks: [] };
+    if (!rawText) return { text: '', codeBlocks: [], tables: [] };
 
+    // ── Step 1: Extract fenced code blocks ───────────────────────────────────
     const codeBlocks = [];
     const CODE_FENCE = /```(\w+)?\n?([\s\S]*?)```/g;
     let match;
@@ -711,15 +712,45 @@
       if (code) codeBlocks.push({ language: lang, code });
     }
 
-    // Remove code blocks from main text and clean up extra whitespace
-    const cleanText = rawText
-      .replace(/```(\w+)?\n?[\s\S]*?```/g, '')
+    // Remove code blocks before table extraction to avoid false positives
+    let intermediate = rawText
+      .replace(/```(\w+)?\n?[\s\S]*?```/g, '\u0000')
+      .trim();
+
+    // ── Step 2: Extract markdown tables ──────────────────────────────────────
+    const tables = [];
+    const TABLE_BLOCK = /(\|.+\|[ \t]*\n)([ \t]*\|[ \t]*[-:]+[ \t]*\|[ \t\-:|]*\n)((?:\|.+\|[ \t]*\n?)+)/gm;
+
+    let tableMatch;
+    while ((tableMatch = TABLE_BLOCK.exec(intermediate)) !== null) {
+      const headerLine = tableMatch[1].trim();
+      const dataBlock  = tableMatch[3].trim();
+      const parseRow = (line) =>
+        line.split('|').slice(1, -1).map(cell => cell.trim());
+      const headers = parseRow(headerLine);
+      const rows    = dataBlock
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.startsWith('|') && l.endsWith('|'))
+        .map(parseRow);
+      if (headers.length >= 2 && rows.length >= 1) {
+        tables.push({ headers, rows });
+      }
+    }
+
+    // Remove matched table blocks from text
+    intermediate = intermediate.replace(TABLE_BLOCK, '\u0000');
+
+    // ── Step 3: Clean up ─────────────────────────────────────────────────────
+    const cleanText = intermediate
+      .replace(/\u0000+/g, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
     return {
       text:       cleanText || rawText,
       codeBlocks,
+      tables,
     };
   }
 
