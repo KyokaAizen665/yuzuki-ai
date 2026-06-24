@@ -18,18 +18,34 @@
  *   renderTable(ctx, opts) → Promise<void>
  *
  *   opts:
- *     title     string         — card header / title
- *     columns   string[]       — column names (used as header row / row labels in list)
- *     rows      string[][]     — data rows, parallel to columns
- *     caption   string?        — optional intro text shown above the data
- *     footer    string?        — attribution / source line
- *     style     'auto' | 'interactive' | 'list' | 'carousel'   default: 'auto'
- *     buttons   NativeFlowButton[]?  — action buttons (max 3)
- *     image     {url}|{data}?  — optional hero image (interactive / carousel only)
+ *     title      string           — card header / title
+ *     columns    string[]         — column names (used as header row / row labels in list)
+ *     rows       string[][]       — data rows, parallel to columns
+ *     caption    string?          — optional intro text shown above the data
+ *     footer     string?          — attribution / source line
+ *     style      'auto' | 'interactive' | 'list' | 'carousel'   default: 'auto'
+ *     buttons    NativeFlowButton[]?  — action buttons (max 3, interactive/carousel only)
+ *     image      {url}|{data}?    — optional hero image (interactive only)
+ *     rowButtons Array[]?         — per-row button arrays (carousel 'items' variant only)
+ *
+ * ── Auto-selection logic ──────────────────────────────────────────────────────
+ *
+ *   style='auto' picks a renderer based on dataset shape:
+ *
+ *   Shape                         → Renderer chosen
+ *   ──────────────────────────────────────────────────
+ *   2 columns (key/value)         → interactive       (immediately readable)
+ *   3+ cols, numeric metrics,
+ *     single data row             → carousel-metrics  (one card per metric column)
+ *   3+ cols, numeric metrics,
+ *     multi data rows             → carousel-items    (one card per row)
+ *   3+ cols, non-numeric          → interactive       (header · col · col text layout)
+ *   Any, when carousel fails      → interactive       (fallback)
+ *   Any, when interactive fails   → formatted text    (plain WA markdown)
+ *
+ *   Callers can override by passing style:'carousel'|'interactive'|'list' explicitly.
  *
  * ── Render chain ──────────────────────────────────────────────────────────────
- *
- *   'auto'        → 'interactive' (default, universally readable)
  *
  *   'interactive' → sendInteractive / sendInteractiveWithImage (NativeFlow)
  *                   WA-markdown formatted body, no box drawing
@@ -37,12 +53,11 @@
  *                   _fallbackText (plain WA markdown text)
  *
  *   'list'        → sendList (native listMessage, tappable rows)
- *                   Best for selectable/navigable data (≤ ~15 rows)
+ *                   Best for selectable/navigable data (≤ ~15 rows, 2 cols)
  *                   ↓ on failure
  *                   interactive path → fallback text
  *
- *   'carousel'    → sendCarousel (multi-card, one card per data row)
- *                   Best for rich per-item data with per-row actions
+ *   'carousel'    → _tryCarouselMetrics or _tryCarouselItems (sendCarousel)
  *                   ↓ on failure
  *                   interactive path → fallback text
  *
@@ -51,12 +66,10 @@
  *
  * ── Logging ───────────────────────────────────────────────────────────────────
  *   [TABLE_RENDER] style=interactive columns=2 rows=8 status=success
+ *   [TABLE_RENDER] style=carousel-metrics columns=3 rows=1 status=success
+ *   [TABLE_RENDER] style=carousel-items columns=3 rows=5 status=success
  *   [TABLE_RENDER] style=list columns=2 rows=4 status=success
  *   [TABLE_RENDER] style=formatted columns=3 rows=5 status=success (fallback)
- *
- * ── Future compatibility ──────────────────────────────────────────────────────
- *   Adding a new style (e.g. 'card', 'poll') only requires adding a new
- *   level here — no changes to callers needed.
  */
 
 import { log } from '../utils/logger.js';
@@ -67,7 +80,49 @@ import {
   sendCarousel,
 } from './rich-messages.js';
 
-// ── Internal helpers ───────────────────────────────────────────────────────────
+// ── Dataset shape detection ─────────────────────────────────────────────────
+
+/**
+ * _isNumericCell(v) — true when the string looks like a measurement / count.
+ *
+ * Matches: integers, floats, comma-formatted numbers, percentages, values
+ * suffixed with k/K/m/M/b/B/g/G (abbreviations), negative values.
+ * Single char cells ("—", "✅", "ES") are treated as NOT numeric.
+ */
+function _isNumericCell(v) {
+  const s = String(v ?? '').trim();
+  if (s.length <= 1) return false;
+  return /^[+\-]?[\d][\d,._\s]*[kKmMbBgGtT%]?$/.test(s)
+      || /^[\d,._]+\s*[kKmMbBgGtT%]$/.test(s);
+}
+
+/**
+ * _isStatsDataset(columns, rows) — heuristics for "statistics-style" data.
+ *
+ * Returns true when:
+ *   - 3 or more columns, AND
+ *   - at least 50% of cells in columns[1..n] look numeric.
+ *
+ * This distinguishes a metrics table (views, likes, comments)
+ * from a key/value pair list or a freeform results table.
+ */
+function _isStatsDataset(columns, rows) {
+  if (columns.length < 3 || !rows.length) return false;
+
+  let numeric = 0;
+  let total   = 0;
+
+  for (const row of rows) {
+    for (let c = 1; c < columns.length; c++) {
+      total++;
+      if (_isNumericCell(row[c])) numeric++;
+    }
+  }
+
+  return total > 0 && (numeric / total) >= 0.5;
+}
+
+// ── Internal body builder ───────────────────────────────────────────────────
 
 /**
  * _buildBody(columns, rows, caption) → string
@@ -81,9 +136,8 @@ import {
  *   *🧠 Memory*  89MB / 142MB RSS
  *
  * Multi-column:
- *   *Name · Stars · Language*
- *   microsoft/vscode · 165k · TypeScript
- *   torvalds/linux · 180k · C
+ *   *👁 Views · ❤️ Likes · 💬 Comments*
+ *   11,022 · 986 · 30
  */
 function _buildBody(columns, rows, caption) {
   const lines = [];
@@ -91,14 +145,12 @@ function _buildBody(columns, rows, caption) {
   if (caption) lines.push(caption, '');
 
   if (columns.length === 2) {
-    // Key–value: bold key, plain value
     for (const row of rows) {
       const key = String(row[0] ?? '');
       const val = String(row[1] ?? '');
       lines.push(`*${key}*   ${val}`);
     }
   } else {
-    // Multi-column: bold header line, then data rows separated by ·
     const sep = ' · ';
     lines.push('*' + columns.join(sep) + '*');
     for (const row of rows) {
@@ -109,10 +161,10 @@ function _buildBody(columns, rows, caption) {
   return lines.join('\n');
 }
 
-// ── Render levels ──────────────────────────────────────────────────────────────
+// ── Render levels ───────────────────────────────────────────────────────────
 
 /**
- * _tryInteractive — primary render path
+ * _tryInteractive — primary non-carousel render path.
  *
  * NativeFlow interactive message: header, formatted body, footer, buttons.
  * Adds hero image header when opts.image is provided.
@@ -141,7 +193,7 @@ async function _tryInteractive(sock, jid, opts, quoted) {
 }
 
 /**
- * _tryList — native listMessage path
+ * _tryList — native listMessage path.
  *
  * WhatsApp native single-select list. Each row becomes a tappable item:
  *   title       = column 0 value (the "key")
@@ -172,19 +224,54 @@ async function _tryList(sock, jid, opts, quoted) {
 }
 
 /**
- * _tryCarousel — multi-card path
+ * _tryCarouselMetrics — stats carousel variant.
  *
- * Each data row becomes an individual card.
- * Best for rich per-item data with per-row actions.
+ * Used when the dataset has a SINGLE data row with 3+ metric columns.
+ * Each column becomes its own card so every metric is immediately visible:
  *
- * Card mapping (per row):
- *   header = columns[0] value   (item name / title)
- *   body   = remaining columns as key: value lines
- *   footer = table-level footer
- *   buttons = per-row buttons from opts.rowButtons[i] (if provided)
+ *   columns = ['👁 Views', '❤️ Likes', '💬 Comments']
+ *   rows    = [['11,022',   '986',      '30']]
+ *
+ *   Card 1: header="👁 Views"    body="11,022"
+ *   Card 2: header="❤️ Likes"   body="986"
+ *   Card 3: header="💬 Comments" body="30"
+ *
+ * For multi-row stats, falls back to _tryCarouselItems instead.
  */
-async function _tryCarousel(sock, jid, opts, quoted) {
-  const { title, columns, rows, footer, rowButtons = [] } = opts;
+async function _tryCarouselMetrics(sock, jid, opts, quoted) {
+  const { title, columns, rows, footer, buttons = [] } = opts;
+
+  const dataRow = rows[0];
+  const cards = columns.map((col, c) => ({
+    header:  col,
+    body:    String(dataRow[c] ?? '—'),
+    footer:  footer ?? '',
+    buttons: buttons.slice(0, 2),
+  }));
+
+  await sendCarousel(sock, jid, {
+    body:  title ?? '',
+    cards,
+  }, quoted);
+}
+
+/**
+ * _tryCarouselItems — item-per-row carousel variant.
+ *
+ * Used when the dataset has MULTIPLE data rows with 3+ columns.
+ * Each row becomes one card:
+ *
+ *   columns = ['Name',    'Stars', 'Language']
+ *   rows    = [['vscode', '165k',  'TypeScript'],
+ *              ['linux',  '180k',  'C']]
+ *
+ *   Card 1: header="vscode"  body="Stars   165k\nLanguage   TypeScript"
+ *   Card 2: header="linux"   body="Stars   180k\nLanguage   C"
+ *
+ * rowButtons (optional): Array of button arrays, one per row.
+ */
+async function _tryCarouselItems(sock, jid, opts, quoted) {
+  const { title, columns, rows, footer, rowButtons = [], buttons = [] } = opts;
 
   const cards = rows.map((row, i) => {
     const bodyLines = [];
@@ -195,7 +282,9 @@ async function _tryCarousel(sock, jid, opts, quoted) {
       header:  String(row[0] ?? `Item ${i + 1}`),
       body:    bodyLines.join('\n') || String(row[0] ?? ''),
       footer:  footer ?? '',
-      buttons: Array.isArray(rowButtons[i]) ? rowButtons[i] : [],
+      buttons: Array.isArray(rowButtons[i])
+        ? rowButtons[i]
+        : buttons.slice(0, 2),
     };
   });
 
@@ -206,7 +295,7 @@ async function _tryCarousel(sock, jid, opts, quoted) {
 }
 
 /**
- * _fallbackText — formatted WA text (never throws)
+ * _fallbackText — formatted WA text (never throws).
  *
  * Last resort: WA-markdown key:value layout.
  * NO box drawing, NO Unicode frames, NO ASCII art.
@@ -224,7 +313,7 @@ async function _fallbackText(sock, jid, opts, quoted) {
   await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
 }
 
-// ── Logging ────────────────────────────────────────────────────────────────────
+// ── Logging ─────────────────────────────────────────────────────────────────
 
 function _log(style, columns, rows, status) {
   log.info(
@@ -232,7 +321,7 @@ function _log(style, columns, rows, status) {
   );
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────────
+// ── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * renderTable(ctx, opts) → Promise<void>
@@ -240,27 +329,31 @@ function _log(style, columns, rows, status) {
  * The single approved output path for all tabular data in Yuzuki AI.
  * Never produces ASCII boxes, Unicode frames, or box-drawing characters.
  *
- * @param {object}  ctx                       — Yuzuki command context
- * @param {object}  opts                      — Table configuration
- * @param {string}  opts.title                — Card header / title
- * @param {string[]}opts.columns              — Column names
- * @param {string[][]}opts.rows               — Data rows (parallel to columns)
- * @param {string}  [opts.caption]            — Intro text above data
- * @param {string}  [opts.footer]             — Attribution / source
- * @param {string}  [opts.style]              — 'auto'|'interactive'|'list'|'carousel'
- * @param {Array}   [opts.buttons]            — Action buttons (max 3)
- * @param {object}  [opts.image]              — Hero image { url } or { data }
- * @param {Array[]} [opts.rowButtons]         — Per-row button arrays (carousel only)
+ * @param {object}   ctx                — Yuzuki command context
+ * @param {object}   opts               — Table configuration
+ * @param {string}   opts.title         — Card header / title
+ * @param {string[]} opts.columns       — Column names
+ * @param {string[][]}opts.rows         — Data rows (parallel to columns)
+ * @param {string}   [opts.caption]     — Intro text above data
+ * @param {string}   [opts.footer]      — Attribution / source
+ * @param {string}   [opts.style]       — 'auto'|'interactive'|'list'|'carousel'
+ *                                        'auto' detects the best renderer from
+ *                                        dataset shape — see module header.
+ * @param {Array}    [opts.buttons]     — Action buttons (max 3)
+ * @param {object}   [opts.image]       — Hero image { url } or { data }
+ *                                        Only used by the interactive path.
+ * @param {Array[]}  [opts.rowButtons]  — Per-row button arrays
+ *                                        Only used by carousel-items path.
  */
 export async function renderTable(ctx, opts) {
   const {
     title,
-    columns = [],
-    rows    = [],
+    columns    = [],
+    rows       = [],
     caption,
     footer,
-    style   = 'auto',
-    buttons = [],
+    style      = 'auto',
+    buttons    = [],
     image,
     rowButtons,
   } = opts;
@@ -272,52 +365,91 @@ export async function renderTable(ctx, opts) {
     return;
   }
 
-  // 'auto' always resolves to 'interactive' — it is universally readable and
-  // doesn't require the user to tap a button before seeing the data (unlike list).
-  const effectiveStyle = style === 'auto' ? 'interactive' : style;
+  // ── Auto-select renderer from dataset shape ─────────────────────────────
+  //
+  // Rules (evaluated in order — first match wins):
+  //  1. Explicit style override from caller → honor it.
+  //  2. 2 columns → interactive (key/value, always readable on first glance).
+  //  3. 3+ columns, stats-shaped (≥50% numeric cells in cols 1..n):
+  //       single data row → carousel-metrics (one card per column / metric)
+  //       multi data rows → carousel-items   (one card per row / item)
+  //  4. 3+ columns, non-numeric  → interactive.
+  //
+  // Carousel is OPTIONAL — any carousel failure falls through to interactive,
+  // which always falls through to plain WA-markdown text. Callers never need
+  // to handle renderer errors.
+
+  let effectiveStyle = style;
+
+  if (style === 'auto') {
+    if (columns.length >= 3 && _isStatsDataset(columns, rows)) {
+      effectiveStyle = rows.length === 1 ? 'carousel-metrics' : 'carousel-items';
+    } else {
+      effectiveStyle = 'interactive';
+    }
+  }
+
+  // Normalize the explicit 'carousel' override: pick variant based on row count.
+  if (style === 'carousel') {
+    effectiveStyle = rows.length === 1 ? 'carousel-metrics' : 'carousel-items';
+  }
 
   const data = { title, columns, rows, caption, footer, buttons, image, rowButtons };
 
-  // ── Carousel path ──────────────────────────────────────────────────────────
-  if (effectiveStyle === 'carousel') {
+  // ── Carousel-metrics path (stats, single row) ──────────────────────────
+  if (effectiveStyle === 'carousel-metrics') {
     try {
-      await _tryCarousel(sock, jid, data, quoted);
-      _log('carousel', columns, rows, 'success');
+      await _tryCarouselMetrics(sock, jid, data, quoted);
+      _log('carousel-metrics', columns, rows, 'success');
       return;
     } catch (e) {
-      log.debug(`[TABLE_RENDER] carousel path failed (${e.message}) — interactive fallback`);
+      log.debug(`[TABLE_RENDER] carousel-metrics failed (${e.message}) — interactive fallback`);
     }
     // Fall through to interactive
+    effectiveStyle = 'interactive';
   }
 
-  // ── List path ──────────────────────────────────────────────────────────────
+  // ── Carousel-items path (stats, multi-row) ─────────────────────────────
+  if (effectiveStyle === 'carousel-items') {
+    try {
+      await _tryCarouselItems(sock, jid, data, quoted);
+      _log('carousel-items', columns, rows, 'success');
+      return;
+    } catch (e) {
+      log.debug(`[TABLE_RENDER] carousel-items failed (${e.message}) — interactive fallback`);
+    }
+    effectiveStyle = 'interactive';
+  }
+
+  // ── List path ──────────────────────────────────────────────────────────
   if (effectiveStyle === 'list') {
     try {
       await _tryList(sock, jid, data, quoted);
       _log('list', columns, rows, 'success');
       return;
     } catch (e) {
-      log.debug(`[TABLE_RENDER] list path failed (${e.message}) — interactive fallback`);
+      log.debug(`[TABLE_RENDER] list failed (${e.message}) — interactive fallback`);
     }
-    // Fall through to interactive
+    effectiveStyle = 'interactive';
   }
 
-  // ── Interactive path (primary for 'interactive' and 'auto') ───────────────
-  try {
-    await _tryInteractive(sock, jid, data, quoted);
-    _log('interactive', columns, rows, 'success');
-    return;
-  } catch (e) {
-    log.debug(`[TABLE_RENDER] interactive path failed (${e.message}) — formatted text`);
+  // ── Interactive path (primary for 2-col, non-stats, and all fallbacks) ─
+  if (effectiveStyle === 'interactive') {
+    try {
+      await _tryInteractive(sock, jid, data, quoted);
+      _log('interactive', columns, rows, 'success');
+      return;
+    } catch (e) {
+      log.debug(`[TABLE_RENDER] interactive failed (${e.message}) — formatted text`);
+    }
   }
 
-  // ── Formatted text fallback (no box drawing, ever) ─────────────────────────
+  // ── Formatted text fallback (no box drawing, ever) ─────────────────────
   try {
     await _fallbackText(sock, jid, data, quoted);
     _log('formatted', columns, rows, 'success');
   } catch (e) {
     log.error(`[TABLE_RENDER] All render paths failed: ${e.message}`);
-    // Last resort: absolute minimum plain text
     try {
       const plain = [
         title ?? '',
