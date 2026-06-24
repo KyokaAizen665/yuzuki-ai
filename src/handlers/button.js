@@ -50,6 +50,16 @@ const STATIC_ROUTES = {
   ai_clear:        () => `${config.prefix}ai clear`,
   ai_status:       () => `${config.prefix}ai status`,
   ai_personality:  () => `${config.prefix}ai personality`,
+  // Downloader shortcuts
+  use_yt:          () => `${config.prefix}dl help`,
+  use_tt:          () => `${config.prefix}dl help`,
+  // Search shortcuts
+  search_web:      () => `${config.prefix}search`,
+  search_wiki:     () => `${config.prefix}search wiki`,
+  search_yt:       () => `${config.prefix}search yt`,
+  // GitHub shortcuts
+  gh_trending:     () => `${config.prefix}gh trending`,
+  gh_search:       () => `${config.prefix}gh search`,
 };
 
 /**
@@ -71,6 +81,12 @@ function resolveBody(id, displayText) {
   if (id.startsWith('help_')) {
     const name = id.slice(5).trim();
     return name ? `${config.prefix}help ${name}` : `${config.prefix}help`;
+  }
+
+  // Lab test buttons — lab_<testname> → .lab <testname>
+  if (id.startsWith('lab_')) {
+    const test = id.slice(4).trim();
+    return test ? `${config.prefix}lab ${test}` : `${config.prefix}lab`;
   }
 
   // ── PHASE 3 FIX: suggest_* → route as .ai <display_text> ─────────────────

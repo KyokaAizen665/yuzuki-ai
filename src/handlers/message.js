@@ -138,6 +138,18 @@ export async function handleMessage(sock, ctx) {
       return true;
     }
 
+    // Sticker caption trigger — sticker sent with a caption like ".menu"
+    // fires as if the user typed that text directly.
+    if (
+      ctx.contentType === 'stickerMessage' &&
+      ctx.media?.caption?.startsWith(config.prefix) &&
+      !ctx.fromMe
+    ) {
+      const stickerCtx = { ...ctx, body: ctx.media.caption };
+      await routeCommand(sock, stickerCtx);
+      return true;
+    }
+
     if (BUTTON_CONTENT_TYPES.has(ctx.contentType) && !ctx.fromMe) {
       log.debug(
         `[pipeline] button tap — contentType=${ctx.contentType}` +

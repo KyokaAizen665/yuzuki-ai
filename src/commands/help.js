@@ -48,11 +48,11 @@ const BRAND_FOOTER = 'Yuzuki AI • Powered by cv3inx';
 // ── Experience categories ─────────────────────────────────────────────────────
 // Presented as experiences, not command dumps.
 const EXPERIENCES = [
-  { icon: '🧠', label: 'AI Assistant', desc: 'Chat, tasks, and intelligent tools'   },
-  { icon: '📥', label: 'Media Hub',    desc: 'YouTube, TikTok, Instagram downloads' },
-  { icon: '🔍', label: 'Discovery',    desc: 'Search, anime, movies, GitHub'        },
-  { icon: '⚙️', label: 'Utilities',    desc: 'QR, translate, and more tools'        },
-  { icon: '👤', label: 'Support',      desc: 'Owner contact and help'               },
+  { icon: '🧠', label: 'AI Assistant', desc: 'Chat, translate, summarise, and more'   },
+  { icon: '📥', label: 'Media Hub',    desc: 'YouTube, TikTok, Instagram, Twitter'    },
+  { icon: '🔍', label: 'Discovery',    desc: 'Web search, Wikipedia, YouTube search'  },
+  { icon: '⚙️', label: 'Utilities',    desc: 'Polls, reactions, and quick tools'      },
+  { icon: '👤', label: 'Support',      desc: 'Owner contact and help'                 },
 ];
 
 // ── Time-aware greeting ───────────────────────────────────────────────────────
@@ -67,13 +67,16 @@ function getGreeting(name) {
 
 // ── Category icons (detail view) ──────────────────────────────────────────────
 const CAT_ICONS = {
-  ai:      '🧠',
-  utility: '⚙️',
-  owner:   '👑',
-  general: '📋',
-  fun:     '🎉',
-  info:    'ℹ️',
-  tools:   '🛠️',
+  ai:          '🧠',
+  utility:     '⚙️',
+  owner:       '👑',
+  general:     '📋',
+  fun:         '🎉',
+  info:        'ℹ️',
+  tools:       '🛠️',
+  downloader:  '📥',
+  search:      '🔍',
+  media:       '🎬',
 };
 function catIcon(cat)  { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -169,16 +172,28 @@ export async function handler(ctx) {
     .map(e => `${e.icon} *${e.label}*\n_${e.desc}_`)
     .join('\n\n');
 
-  const caption =
+  // ── Footer info section ───────────────────────────────────────────────────
+  // Shows a compact category breakdown beneath the experience list.
+  const catLines = cats
+    .filter(c => c !== 'owner') // hide owner category from public menu
+    .map(c => {
+      const count = getByCategory(c).length;
+      return `${catIcon(c)} ${capitalize(c)}: ${count}`;
+    })
+    .join('  ·  ');
+
+  const fullCaption =
     `${getGreeting(pushName)}\n\n` +
     `${experienceLines}\n\n` +
-    `${totalCmds} commands  ·  v${version}`;
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `${catLines}\n` +
+    `_${totalCmds} total commands  ·  v${version}_`;
 
-  // Navigation buttons — help users move through the product
+  // Navigation buttons — 3 most-used entry points
   const menuButtons = [
     { text: '🧠 AI Chat',  id: 'cmd_ai'    },
-    { text: '📊 Bot Info', id: 'cmd_info'  },
-    { text: '👑 Owner',    id: 'cmd_owner' },
+    { text: '📥 Download', id: 'cmd_dl'    },
+    { text: '🔍 Search',   id: 'cmd_search'},
   ];
 
   const heroImage   = getRandomHeroImage('menu');
@@ -189,7 +204,7 @@ export async function handler(ctx) {
       jid,
       {
         image:      heroImage,
-        caption,
+        caption:    fullCaption,
         nativeFlow: menuButtons,
         footer:     BRAND_FOOTER,
         ...(offerFields ?? {}),
@@ -203,6 +218,9 @@ export async function handler(ctx) {
       getGreeting(pushName),
       '',
       ...EXPERIENCES.map(e => `${e.icon} *${e.label}* — ${e.desc}`),
+      '',
+      `${catLines}`,
+      `_${totalCmds} commands total_`,
       '',
       `_Type \`${prefix}help <command>\` for details._`,
     ];

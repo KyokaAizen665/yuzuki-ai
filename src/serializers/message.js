@@ -83,7 +83,7 @@ function extractBody(contentMsg, type) {
       case 'videoMessage':                return m?.caption ?? null;
       case 'documentMessage':             return m?.caption ?? null;
       case 'audioMessage':                return null;
-      case 'stickerMessage':              return null;
+      case 'stickerMessage':              return m?.caption ?? null;
       case 'ptvMessage':                  return null;
       case 'buttonsMessage':              return m?.contentText ?? m?.headerText ?? null;
       case 'buttonsResponseMessage':      return m?.selectedDisplayText ?? m?.selectedButtonId ?? null;
