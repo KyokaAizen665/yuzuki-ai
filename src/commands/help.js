@@ -3,6 +3,8 @@
  *
  * Full menu (.menu / .help with no args):
  *   • Hero image   — cv3inx native { image, caption, nativeFlow } API
+ *                    Image provided by getRandomHeroImage('menu') — rotates from
+ *                    assets/hero/menu/ or falls back to HERO_IMAGE_MENU_URL env var.
  *   • Caption      — botName · version · command count
  *   • Offer card   — cv3inx native offerText/offerUrl/offerCode/offerExpiration
  *                    Renders as native WhatsApp offer UI (tag icon, title,
@@ -18,6 +20,11 @@
  *   MENU_OFFER_URL    — tap URL
  *   MENU_OFFER_CODE   — promo/copy code shown as "Code: …"
  *   MENU_OFFER_EXPIRY — unix timestamp (seconds) shown as "Ends on …"
+ *
+ * Hero image config (all optional):
+ *   assets/hero/menu/  — drop any .jpg/.png/.webp here; rotates randomly
+ *   HERO_IMAGE_MENU_URL — fallback URL when no local files are present
+ *   See src/services/hero-images.js for full priority resolution docs.
  */
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
@@ -26,6 +33,7 @@ import {
   sendInteractive,
   quickReply,
 } from '../services/rich-messages.js';
+import { getRandomHeroImage } from '../services/hero-images.js';
 
 export const meta = {
   name:        'help',
@@ -39,13 +47,7 @@ export const meta = {
 };
 
 // ── Brand footer ──────────────────────────────────────────────────────────────
-// Concise, no implementation details. Renders correctly on all WhatsApp clients.
-// WhatsApp truncates footer text after ~60 chars — keep it short.
 const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;
-
-// ── Hero image ────────────────────────────────────────────────────────────────
-// Direct JPEG, HTTP 200, no redirect, no auth. Validated in Phase 1.
-const HERO_IMAGE_URL = 'https://www.gstatic.com/webp/gallery/1.jpg';
 
 // ── Category icons ────────────────────────────────────────────────────────────
 const CAT_ICONS = {
@@ -192,6 +194,9 @@ export async function handler(ctx) {
     { text: '📋 Help',    id: 'cmd_help'    },
   ];
 
+  // Hero image — resolved by category from assets/hero/menu/ or env/fallback URL
+  const heroImage = getRandomHeroImage('menu');
+
   // Native offer card — injected only when configured
   const offerFields = buildOfferFields();
 
@@ -199,7 +204,7 @@ export async function handler(ctx) {
     await sock.sendMessage(
       jid,
       {
-        image:      { url: HERO_IMAGE_URL },
+        image:      heroImage,
         caption,
         nativeFlow: menuButtons,
         footer:     BRAND_FOOTER,
