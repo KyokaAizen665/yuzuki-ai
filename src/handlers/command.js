@@ -1,5 +1,5 @@
 /**
- * Command Router — Phase 4
+ * Command Router — Phase 4 + Permission Denied Renderer integration
  *
  * Full dispatch pipeline with permission middleware and cooldown enforcement.
  *
@@ -22,7 +22,39 @@ import {
   checkCooldown,
   setCooldown,
   isOwner,
+  isPremium,
 } from './permissions.js';
+import { renderPermissionDenied } from '../services/permission-denied.js';
+
+// ── Level resolver (mirrors permissions.js resolveLevel — no circular import) ──
+
+/**
+ * resolveRequiredLevel(meta) → string
+ *
+ * Reads meta.permission first, then falls back to the legacy boolean triplet.
+ * Must stay in sync with resolveLevel() in permissions.js.
+ */
+function resolveRequiredLevel(meta) {
+  if (meta.permission) return meta.permission;
+  if (meta.owner   === true)  return 'owner';
+  if (meta.premium === true)  return 'premium';
+  if (meta.group   === true)  return 'group';
+  if (meta.group   === false) return 'private';
+  return 'public';
+}
+
+/**
+ * resolveUserLevel(sender) → string
+ *
+ * Best-effort sync determination of the caller's highest effective level.
+ * Admin / groupOwner resolution is async (requires groupMetadata) and is
+ * intentionally skipped here — the card is accurate for the most common cases.
+ */
+function resolveUserLevel(sender) {
+  if (isOwner(sender))   return 'owner';
+  if (isPremium(sender)) return 'premium';
+  return 'user';
+}
 
 // ── Context builder ───────────────────────────────────────────────────────────
 
@@ -88,6 +120,14 @@ function buildCmdCtx(sock, ctx, resolvedName, args) {
  *
  * Called by the message pipeline (handlers/message.js) for every
  * message whose body starts with the configured prefix.
+ *
+ * Also called by:
+ *   - button.js  (routeButtonResponse → routeCommand with synthetic body)
+ *   - sticker command path (normalized body passed through as-is)
+ *
+ * Permission denials from any of those call sites are rendered by
+ * renderPermissionDenied() — a rich interactive card matching the menu style,
+ * with a formatted-text fallback if the card path fails.
  */
 export async function routeCommand(sock, ctx) {
   try {
@@ -119,13 +159,15 @@ export async function routeCommand(sock, ctx) {
     const perm = await checkPermission(meta, ctx, sock);
     if (!perm.allowed) {
       log.warn(`[cmd:deny] ${resolvedName} → ${ctx.sender} — ${perm.reason}`);
-      try {
-        await sock.sendMessage(
-          ctx.chat,
-          { text: perm.reason },
-          { quoted: ctx.rawMessage },
-        );
-      } catch { /* best-effort */ }
+
+      // Render the rich Permission Denied card.
+      // renderPermissionDenied never throws — it has its own text fallback.
+      await renderPermissionDenied(sock, ctx.chat, ctx.rawMessage, {
+        commandName:   resolvedName,
+        requiredLevel: resolveRequiredLevel(meta),
+        userLevel:     resolveUserLevel(ctx.sender),
+        reason:        perm.reason,
+      });
       return;
     }
 
