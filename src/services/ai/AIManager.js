@@ -1,3 +1,4 @@
+SHA: 11f66e7dcd937be0954b42507d95d52787476f33
 /**
  * AIManager — Phase 6
  *
@@ -28,13 +29,13 @@ import { recallForPrompt } from './MemoryManager.js';
 // ── Provider registry ─────────────────────────────────────────────────────────
 
 const PROVIDER_MODULES = [
-  () => import('./providers/groq.js'),
   () => import('./providers/gemini.js'),
+  () => import('./providers/groq.js'),
   () => import('./providers/openrouter.js'),
   () => import('./providers/pollinations.js'),
 ];
 
-const PROVIDER_NAMES = ['groq', 'gemini', 'openrouter', 'pollinations'];
+const PROVIDER_NAMES = ['gemini', 'groq', 'openrouter', 'pollinations'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
