@@ -3,7 +3,7 @@
  *
  * Full menu (.menu / .help with no args):
  *   • Hero image    — cv3inx native { image, caption, nativeFlow } API
- *                     Rotates from assets/hero/menu/ or HERO_IMAGE_MENU_URL env var.
+ *                     Rotates from assets/heroes/ via HeroManager.
  *   • Caption       — Time-aware greeting + experience-first category overview.
  *                     No command walls. Presents experiences, not raw commands.
  *   • Offer card    — cv3inx native offerText/offerUrl/offerCode/offerExpiration
@@ -15,21 +15,23 @@
  * Detail view (.help <command>):
  *   • sendInteractive with command metadata + back/run buttons
  *
+ * Hero image config:
+ *   assets/heroes/          — drop .jpg/.png/.webp here; rotates randomly
+ *   MENU_HERO_MODE=random   random rotation (default)
+ *   MENU_HERO_MODE=static   always use MENU_HERO_IMAGE
+ *   MENU_HERO_IMAGE=hero-1.jpg
+ *
  * Offer overlay config (all optional, all in .env):
  *   MENU_OFFER_TEXT   — offer title (leave empty = no card)
  *   MENU_OFFER_URL    — tap URL
  *   MENU_OFFER_CODE   — promo/copy code shown as "Code: …"
  *   MENU_OFFER_EXPIRY — unix timestamp (seconds) shown as "Ends on …"
- *
- * Hero image config (all optional):
- *   assets/hero/menu/  — drop any .jpg/.png/.webp here; rotates randomly
- *   HERO_IMAGE_MENU_URL — fallback URL when no local files are present
  */
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
 import { config }                from '../config/index.js';
 import { sendInteractive, quickReply } from '../services/rich-messages.js';
-import { getRandomHeroImage }    from '../services/hero-images.js';
+import { getHeroImage }          from '../services/ui/HeroManager.js';
 
 export const meta = {
   name:        'help',
@@ -44,7 +46,6 @@ export const meta = {
 const BRAND_FOOTER = 'Yuzuki AI • Powered by cv3inx';
 
 // ── Experience categories ─────────────────────────────────────────────────────
-// Presented as experiences, not command dumps.
 const EXPERIENCES = [
   { icon: '🧠', label: 'AI Assistant', desc: 'Chat, translate, summarise, and more'   },
   { icon: '📥', label: 'Media Hub',    desc: 'YouTube, TikTok, Instagram, Twitter'    },
@@ -165,15 +166,12 @@ export async function handler(ctx) {
   const botName   = config.botName ?? 'Yuzuki AI';
   const version   = config.version ?? '2.0.0';
 
-  // Experience-first caption — breathable, no command walls
   const experienceLines = EXPERIENCES
     .map(e => `${e.icon} *${e.label}*\n_${e.desc}_`)
     .join('\n\n');
 
-  // ── Footer info section ───────────────────────────────────────────────────
-  // Shows a compact category breakdown beneath the experience list.
   const catLines = cats
-    .filter(c => c !== 'owner') // hide owner category from public menu
+    .filter(c => c !== 'owner')
     .map(c => {
       const count = getByCategory(c).length;
       return `${catIcon(c)} ${capitalize(c)}: ${count}`;
@@ -187,14 +185,14 @@ export async function handler(ctx) {
     `${catLines}\n` +
     `_${totalCmds} total commands  ·  v${version}_`;
 
-  // Navigation buttons — 3 most-used entry points
   const menuButtons = [
     { text: '🧠 AI Chat',  id: 'cmd_ai'    },
     { text: '📥 Download', id: 'cmd_dl'    },
     { text: '🔍 Search',   id: 'cmd_search'},
   ];
 
-  const heroImage   = getRandomHeroImage('menu');
+  // ── Hero image from HeroManager ───────────────────────────────────────────
+  const heroImage   = getHeroImage();
   const offerFields = buildOfferFields();
 
   try {
