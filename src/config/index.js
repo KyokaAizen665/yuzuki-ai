@@ -18,10 +18,10 @@ export const config = Object.freeze({
   autoRecording:        bool(process.env.AUTO_RECORDING,false),
   publicMode:           bool(process.env.PUBLIC_MODE,   true),
 
-  // ── AI providers (Phase 6) ───────────────────────────────────────────────
-  // Preferred provider: auto | groq | gemini | openrouter | pollinations
+  // ── AI providers ─────────────────────────────────────────────────────────
+  // AI_PROVIDER: auto | groq | gemini | openrouter | openai | puter | pollinations
   aiProvider:           process.env.AI_PROVIDER        ?? 'auto',
-  // Comma-separated fallback order (overrides default chain)
+  // AI_FALLBACK_CHAIN: comma-separated priority order, e.g. "groq,gemini,openrouter,puter"
   aiFallbackChain:      process.env.AI_FALLBACK_CHAIN  ?? '',
 
   // Groq — free tier: https://console.groq.com
@@ -36,6 +36,14 @@ export const config = Object.freeze({
   openrouterApiKey:     process.env.OPENROUTER_API_KEY  ?? '',
   openrouterModel:      process.env.OPENROUTER_MODEL    ?? 'meta-llama/llama-3.1-8b-instruct:free',
 
+  // OpenAI: https://platform.openai.com/api-keys
+  openaiApiKey:         process.env.OPENAI_API_KEY      ?? '',
+  openaiModel:          process.env.OPENAI_MODEL        ?? 'gpt-4o-mini',
+
+  // Puter — free credits (sign up at https://puter.com, get key from dev-center)
+  puterApiKey:          process.env.PUTER_API_KEY       ?? '',
+  puterModel:           process.env.PUTER_MODEL         ?? 'gpt-4o-mini',
+
   // Pollinations — no API key required (always available as fallback)
   pollinationsModel:    process.env.POLLINATIONS_MODEL  ?? 'openai-large',
 
@@ -44,25 +52,6 @@ export const config = Object.freeze({
   officialChannelUrl:   process.env.OFFICIAL_CHANNEL_URL ?? '',
 
   // ── Menu offer overlay ───────────────────────────────────────────────────
-  // Renders as the native WhatsApp offer card (tag icon, title, expiry, code).
-  // cv3inx API: offerText / offerUrl / offerCode / offerExpiration.
-  // Leave MENU_OFFER_TEXT empty (or unset) to disable the offer card entirely.
-  //
-  // Usage examples (.env):
-  //   # Announcement
-  //   MENU_OFFER_TEXT=📢 Yuzuki AI v2.1 — now with GPT-4o
-  //
-  //   # Promotion with promo code + 30-day expiry
-  //   MENU_OFFER_TEXT=🎁 Premium — 30 % off this week
-  //   MENU_OFFER_CODE=YUZUKI30
-  //   MENU_OFFER_EXPIRY=1785427200
-  //
-  //   # Maintenance notice
-  //   MENU_OFFER_TEXT=🔧 Scheduled maintenance: Jul 14, 02:00–04:00 UTC
-  //
-  // MENU_OFFER_URL   — optional tap URL (leave empty for pure text card)
-  // MENU_OFFER_CODE  — optional copy/promo code shown as "Code: …"
-  // MENU_OFFER_EXPIRY — optional unix timestamp (seconds) shown as "Ends on …"
   menuOfferText:        process.env.MENU_OFFER_TEXT   ?? '',
   menuOfferUrl:         process.env.MENU_OFFER_URL    ?? '',
   menuOfferCode:        process.env.MENU_OFFER_CODE   ?? '',
