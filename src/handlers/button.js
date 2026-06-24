@@ -50,6 +50,10 @@ const STATIC_ROUTES = {
   ch_unfollow:     () => `${config.prefix}channel unfollow`,
   ch_mute:         () => `${config.prefix}channel mute`,
   ch_unmute:       () => `${config.prefix}channel unmute`,
+  // AI card buttons (from the .ai no-args interactive card)
+  ai_clear:        () => `${config.prefix}ai clear`,
+  ai_status:       () => `${config.prefix}ai status`,
+  ai_personality:  () => `${config.prefix}ai personality`,
 };
 
 function resolveBody(id) {
