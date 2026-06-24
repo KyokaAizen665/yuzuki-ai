@@ -1,8 +1,14 @@
 /**
- * Command: gemini
+ * Command: gemini — Phase 8 upgrade
+ *
+ * PATCH CHANGES vs previous version:
+ *   • Final AI output routes through renderAIResponse() — the single approved
+ *     output path. No direct sendNativeAIResponse calls for response content.
+ *   • Latency tracked at command level and included in response card.
+ *   • Error cards and info cards unchanged (not AI response content).
  *
  * Google Gemini dedicated interface.
- * Forces the Gemini provider for every call (forceProvider: 'gemini').
+ * Forces the Gemini provider for every call.
  * If GEMINI_API_KEY is not set → shows a setup card and exits cleanly.
  * If Gemini fails mid-call → shows an error card with .ai fallback option.
  *
@@ -17,13 +23,12 @@ import {
 import { aiRateLimiter }     from '../services/rate-limiter.js';
 import { config }            from '../config/index.js';
 import {
-  sendNativeAIResponse,
   sendInteractiveWithImage,
   sendReaction,
   quickReply,
-  parseAIText,
-} from '../services/rich-messages.js';
+}                            from '../services/rich-messages.js';
 import { getRandomHeroImage } from '../services/hero-images.js';
+import { renderAIResponse }   from '../services/ai-renderer.js';
 
 export const meta = {
   name:        'gemini',
@@ -34,7 +39,7 @@ export const meta = {
   permission:  'public',
 };
 
-const BRAND_FOOTER = 'Yuzuki AI • Google Gemini';
+const BRAND_FOOTER = () => `Yuzuki AI • Google Gemini`;
 
 export async function handler(ctx) {
   const { args, chat: chatJid, sender, pushName, isOwner, sock, rawMessage } = ctx;
@@ -53,10 +58,10 @@ export async function handler(ctx) {
         `2. Set GEMINI_API_KEY in your .env file\n` +
         `3. Restart the bot\n\n` +
         `_AI is still available via the fallback provider._`,
-      footer:  BRAND_FOOTER,
+      footer:  BRAND_FOOTER(),
       buttons: [
-        quickReply('🤖 Use AI instead', 'cmd_ai'    ),
-        quickReply('📊 Check Status',   'ai_status' ),
+        quickReply('🤖 Use AI instead', 'cmd_ai'   ),
+        quickReply('📊 Check Status',   'ai_status'),
       ],
     }, rawMessage);
   }
@@ -83,7 +88,7 @@ export async function handler(ctx) {
             { text: '📊 AI Status', id: 'ai_status' },
             { text: '← Menu',      id: 'back_menu' },
           ],
-          footer:    BRAND_FOOTER,
+          footer:    BRAND_FOOTER(),
           offerText: '⚡ Gemini 2.0 Flash connected',
         },
         rawMessage ? { quoted: rawMessage } : {},
@@ -109,6 +114,7 @@ export async function handler(ctx) {
   try { await sendReaction(sock, chatJid, ctx.key, '⚡'); } catch {}
   try { await sock.sendPresenceUpdate('composing', chatJid); } catch {}
 
+  const startMs = Date.now();
   let result;
   try {
     result = await chat(chatJid, sender, prompt, {
@@ -122,30 +128,26 @@ export async function handler(ctx) {
       header:  '⚠️ Gemini Unavailable',
       image:   getRandomHeroImage('ai'),
       body:    `Gemini could not respond at this time.\n\n_${err.message}_\n\nUse the main AI command which falls back automatically.`,
-      footer:  BRAND_FOOTER,
+      footer:  BRAND_FOOTER(),
       buttons: [
-        quickReply('🤖 Use AI instead', 'cmd_ai'    ),
-        quickReply('← Menu',           'back_menu' ),
+        quickReply('🤖 Use AI instead', 'cmd_ai'   ),
+        quickReply('← Menu',           'back_menu'),
       ],
     }, rawMessage);
   }
+  const latency = Date.now() - startMs;
 
   try { await sock.sendPresenceUpdate('paused', chatJid); } catch {}
-  const parsed = parseAIText(result.text);
-  try {
-    await sendReaction(sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '⚡');
-  } catch {}
 
-  const suggestedPrompts = parsed.codeBlocks.length
-    ? ['Explain this code', 'Improve it', 'Add comments']
-    : ['Continue', 'Explain more', 'Simplify', 'Give example'];
+  const hasCode = result.text?.includes('```');
+  try { await sendReaction(sock, chatJid, ctx.key, hasCode ? '💻' : '⚡'); } catch {}
 
-  await sendNativeAIResponse(sock, chatJid, {
-    text:             parsed.text,
-    codeBlocks:       parsed.codeBlocks,
-    suggestedPrompts,
-    model:            result.model,
-    provider:         result.provider,
-    tokens:           result.tokens,
-  }, rawMessage);
+  await renderAIResponse(ctx, {
+    provider:  result.provider,
+    model:     result.model,
+    prompt,
+    response:  result.text,
+    latency,
+    usage:     { tokens: result.tokens ?? 0 },
+  });
 }

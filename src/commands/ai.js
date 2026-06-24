@@ -1,20 +1,15 @@
 /**
- * Command: ai — Phase 3 upgrade
+ * Command: ai — Phase 8 upgrade
  *
- * PATCH CHANGES vs Phase 2.5:
- *   • Main chat flow now calls sendNativeAIResponse (cv3inx proto-level AI
- *     rich format) with automatic fallback to sendAIRichResponse. Richer
- *     rendering for clients that support AIRichResponseMessage.
- *   • New task subcommands added (wires buildTaskPrompt which was unused):
- *       .ai summarise <text>         — bullet-point summary
- *       .ai translate <lang> <text>  — translate to any language
- *       .ai explain <text>           — plain-English explanation
- *       .ai debug <code>             — bug identification + fixes
- *       .ai brainstorm <topic>       — creative idea generation
- *   • Task subcommands respect rate limiting and conversation history
- *     (skipHistory: true for one-shot task calls).
- *   • All existing subcommands (clear, status, provider, personality,
- *     on, off, dmon, dmoff) unchanged.
+ * PATCH CHANGES vs Phase 3:
+ *   • All final AI output now routes through renderAIResponse() — the single
+ *     approved output path. No direct sendNativeAIResponse / m.reply() calls
+ *     for AI response content.
+ *   • Latency is tracked at the command level and passed to the renderer so
+ *     every response card shows real round-trip time.
+ *   • Task subcommands use task-specific suggestedPrompts passed into renderer.
+ *   • All other subcommands (clear, status, provider, personality, on/off,
+ *     dmon/dmoff) are unchanged.
  *
  * Usage:
  *   .ai <message>                — chat
@@ -49,14 +44,12 @@ import { config }           from '../config/index.js';
 import { setSetting }       from '../database/store.js';
 import { getPersonalities, buildTaskPrompt } from '../services/ai/PromptManager.js';
 import {
-  sendNativeAIResponse,
-  sendAIRichResponse,
   sendInteractiveWithImage,
   sendReaction,
   quickReply,
-  parseAIText,
-} from '../services/rich-messages.js';
+}                           from '../services/rich-messages.js';
 import { getRandomHeroImage } from '../services/hero-images.js';
+import { renderAIResponse } from '../services/ai-renderer.js';
 
 export const meta = {
   name:        'ai',
@@ -67,18 +60,17 @@ export const meta = {
   permission:  'public',
 };
 
-// ── Task subcommands (wires buildTaskPrompt) ──────────────────────────────────
+// ── Task subcommands ──────────────────────────────────────────────────────────
 
 const TASK_SUBS = new Set(['summarise', 'translate', 'explain', 'debug', 'brainstorm']);
 
 /**
  * handleTask(ctx, task, textArgs) → Promise<void>
  *
- * Runs a one-shot task call using buildTaskPrompt as the system supplement.
- * skipHistory: true — task commands don't pollute the conversational context.
+ * One-shot task call (skipHistory: true). Routes output through renderAIResponse.
  */
 async function handleTask(ctx, task, textArgs) {
-  const { chat: chatJid, sender, pushName, isOwner, sock: _sock } = ctx;
+  const { chat: chatJid, sender, pushName, isOwner } = ctx;
 
   if (!isAIEnabledForChat(chatJid)) {
     return ctx.reply('❌ AI chat is currently disabled for this chat.');
@@ -119,30 +111,28 @@ async function handleTask(ctx, task, textArgs) {
   try { await sendReaction(ctx.sock, chatJid, ctx.key, '⚙️'); } catch { /* best-effort */ }
   try { await ctx.sock.sendPresenceUpdate('composing', chatJid); } catch { /* best-effort */ }
 
-  // Build a task-augmented prompt by prepending the task instruction
+  // Build a task-augmented prompt
   const taskInstruction = buildTaskPrompt(task, taskContext);
-  const fullPrompt = taskInstruction
-    ? `${taskInstruction}\n\n${userText}`
-    : userText;
+  const fullPrompt = taskInstruction ? `${taskInstruction}\n\n${userText}` : userText;
 
+  const startMs = Date.now();
   let result;
   try {
     result = await chat(chatJid, sender, fullPrompt, {
       senderName:  pushName ?? sender,
-      skipHistory: true,   // one-shot — don't pollute conversation context
+      skipHistory: true,
     });
   } catch (err) {
     try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch {}
     try { await sendReaction(ctx.sock, chatJid, ctx.key, '❌'); } catch {}
     return ctx.reply(`⚠️ AI error: ${err.message}`);
   }
+  const latency = Date.now() - startMs;
 
   try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch {}
-  const parsed = parseAIText(result.text);
-  try { await sendReaction(ctx.sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
 
-  // Task follow-up buttons differ per task type
-  const followUps = {
+  // Task-specific follow-up prompts
+  const suggestedPrompts = {
     summarise:  ['Expand on this', 'Bullet points only', 'One sentence'],
     translate:  ['Translate to Spanish', 'Translate to French', 'Translate to Arabic'],
     explain:    ['Give an example', 'Explain simpler', 'More detail'],
@@ -150,14 +140,19 @@ async function handleTask(ctx, task, textArgs) {
     brainstorm: ['More ideas', 'Develop idea 1', 'Rank by feasibility'],
   }[task] ?? ['Continue', 'Explain more', 'Give example'];
 
-  await sendNativeAIResponse(ctx.sock, chatJid, {
-    text:            parsed.text,
-    codeBlocks:      parsed.codeBlocks,
-    suggestedPrompts: followUps,
-    model:           result.model,
+  // Determine success reaction from raw result
+  const hasCode = result.text?.includes('```');
+  try { await sendReaction(ctx.sock, chatJid, ctx.key, hasCode ? '💻' : '✅'); } catch {}
+
+  await renderAIResponse(ctx, {
     provider:        result.provider,
-    tokens:          result.tokens,
-  }, ctx.rawMessage);
+    model:           result.model,
+    prompt:          fullPrompt,
+    response:        result.text,
+    latency,
+    usage:           { tokens: result.tokens ?? 0 },
+    suggestedPrompts,
+  });
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -189,7 +184,7 @@ export async function handler(ctx) {
     ).join('\n');
 
     return ctx.reply(
-      `🤖 *AI Status — Phase 6*\n\n` +
+      `🤖 *AI Status — Phase 8*\n\n` +
       `• Global AI:   ${globalOn  ? '✅ enabled'    : '❌ disabled'}\n` +
       `• This chat:   ${enabled   ? '✅ enabled'    : '❌ disabled'}\n` +
       `• Passive DM:  ${passiveDM ? '✅ on'         : '⭕ off'}\n` +
@@ -264,7 +259,6 @@ export async function handler(ctx) {
   }
 
   // ── Task subcommands ──────────────────────────────────────────────────────
-  // summarise, translate, explain, debug, brainstorm
   if (TASK_SUBS.has(sub)) {
     return handleTask(ctx, sub, args.slice(1));
   }
@@ -312,6 +306,7 @@ export async function handler(ctx) {
   try { await sendReaction(ctx.sock, chatJid, ctx.key, '✨'); } catch { /* best-effort */ }
   try { await ctx.sock.sendPresenceUpdate('composing', chatJid); } catch { /* best-effort */ }
 
+  const startMs = Date.now();
   let result;
   try {
     result = await chat(chatJid, sender, prompt, {
@@ -322,22 +317,19 @@ export async function handler(ctx) {
     try { await sendReaction(ctx.sock, chatJid, ctx.key, '❌'); } catch {}
     return ctx.reply(`⚠️ AI error: ${err.message}`);
   }
+  const latency = Date.now() - startMs;
 
   try { await ctx.sock.sendPresenceUpdate('paused', chatJid); } catch {}
-  const parsed = parseAIText(result.text);
-  try { await sendReaction(ctx.sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
 
-  const suggestedPrompts = parsed.codeBlocks.length
-    ? ['Explain this code', 'Improve it', 'Add comments']
-    : ['Continue', 'Explain more', 'Simplify', 'Give example'];
+  const hasCode = result.text?.includes('```');
+  try { await sendReaction(ctx.sock, chatJid, ctx.key, hasCode ? '💻' : '✅'); } catch {}
 
-  // PATCH: use sendNativeAIResponse (cv3inx proto AI format with fallback)
-  await sendNativeAIResponse(ctx.sock, chatJid, {
-    text:            parsed.text,
-    codeBlocks:      parsed.codeBlocks,
-    suggestedPrompts,
-    model:           result.model,
-    provider:        result.provider,
-    tokens:          result.tokens,
-  }, ctx.rawMessage);
+  await renderAIResponse(ctx, {
+    provider:  result.provider,
+    model:     result.model,
+    prompt,
+    response:  result.text,
+    latency,
+    usage:     { tokens: result.tokens ?? 0 },
+  });
 }
