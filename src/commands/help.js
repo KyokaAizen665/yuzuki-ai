@@ -2,15 +2,15 @@
  * Command: help / menu
  *
  * Full menu (.menu / .help with no args):
- *   • Hero image   — cv3inx native { image, caption, nativeFlow } API
- *                    Image provided by getRandomHeroImage('menu') — rotates from
- *                    assets/hero/menu/ or falls back to HERO_IMAGE_MENU_URL env var.
- *   • Caption      — botName · version · command count
- *   • Offer card   — cv3inx native offerText/offerUrl/offerCode/offerExpiration
- *                    Renders as native WhatsApp offer UI (tag icon, title,
- *                    "Ends on…", "Code:…"). Disabled when MENU_OFFER_TEXT is empty.
- *   • 3 buttons    — Owner | Channel | Help  (quick_reply, routed via button.js)
- *   • Footer       — concise brand string, renders on all clients
+ *   • Hero image    — cv3inx native { image, caption, nativeFlow } API
+ *                     Rotates from assets/hero/menu/ or HERO_IMAGE_MENU_URL env var.
+ *   • Caption       — Time-aware greeting + experience-first category overview.
+ *                     No command walls. Presents experiences, not raw commands.
+ *   • Offer card    — cv3inx native offerText/offerUrl/offerCode/offerExpiration
+ *                     Renders as native WhatsApp offer UI. Disabled when
+ *                     MENU_OFFER_TEXT is unset.
+ *   • 3 buttons     — AI Chat | Bot Info | Owner  (navigation via button.js)
+ *   • Footer        — "Yuzuki AI • Powered by cv3inx"
  *
  * Detail view (.help <command>):
  *   • sendInteractive with command metadata + back/run buttons
@@ -24,16 +24,12 @@
  * Hero image config (all optional):
  *   assets/hero/menu/  — drop any .jpg/.png/.webp here; rotates randomly
  *   HERO_IMAGE_MENU_URL — fallback URL when no local files are present
- *   See src/services/hero-images.js for full priority resolution docs.
  */
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
-import { config } from '../config/index.js';
-import {
-  sendInteractive,
-  quickReply,
-} from '../services/rich-messages.js';
-import { getRandomHeroImage } from '../services/hero-images.js';
+import { config }                from '../config/index.js';
+import { sendInteractive, quickReply } from '../services/rich-messages.js';
+import { getRandomHeroImage }    from '../services/hero-images.js';
 
 export const meta = {
   name:        'help',
@@ -46,20 +42,39 @@ export const meta = {
   group:       null,
 };
 
-// ── Brand footer ──────────────────────────────────────────────────────────────
-const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;
+// ── Brand ─────────────────────────────────────────────────────────────────────
+const BRAND_FOOTER = 'Yuzuki AI • Powered by cv3inx';
 
-// ── Category icons ────────────────────────────────────────────────────────────
+// ── Experience categories ─────────────────────────────────────────────────────
+// Presented as experiences, not command dumps.
+const EXPERIENCES = [
+  { icon: '🧠', label: 'AI Assistant', desc: 'Chat, tasks, and intelligent tools'   },
+  { icon: '📥', label: 'Media Hub',    desc: 'YouTube, TikTok, Instagram downloads' },
+  { icon: '🔍', label: 'Discovery',    desc: 'Search, anime, movies, GitHub'        },
+  { icon: '⚙️', label: 'Utilities',    desc: 'QR, translate, and more tools'        },
+  { icon: '👤', label: 'Support',      desc: 'Owner contact and help'               },
+];
+
+// ── Time-aware greeting ───────────────────────────────────────────────────────
+function getGreeting(name) {
+  const hour = new Date().getHours();
+  const hi   = name ? `, ${name}` : '';
+  if (hour >= 5  && hour < 12) return `Good morning${hi}. Your assistant is ready.`;
+  if (hour >= 12 && hour < 17) return `Good afternoon${hi}. What would you like to do today?`;
+  if (hour >= 17 && hour < 21) return `Good evening${hi}. Explore AI, media, and more.`;
+  return `Welcome back${hi}. Your assistant is ready.`;
+}
+
+// ── Category icons (detail view) ──────────────────────────────────────────────
 const CAT_ICONS = {
-  ai:      '🤖',
-  utility: '🔧',
+  ai:      '🧠',
+  utility: '⚙️',
   owner:   '👑',
   general: '📋',
   fun:     '🎉',
   info:    'ℹ️',
   tools:   '🛠️',
 };
-
 function catIcon(cat)  { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
@@ -74,20 +89,6 @@ function permLabel(m) {
 }
 
 // ── Offer overlay helper ──────────────────────────────────────────────────────
-/**
- * buildOfferFields() → object | null
- *
- * Returns cv3inx native offer fields when MENU_OFFER_TEXT is configured,
- * or null when the offer card is disabled.
- *
- * cv3inx reads these from the top-level message object in prepareNativeFlowButtons:
- *   offerText       → limited_time_offer.text
- *   offerUrl        → limited_time_offer.url
- *   offerCode       → limited_time_offer.copy_code  (shown as "Code: …")
- *   offerExpiration → limited_time_offer.expiration_time (shown as "Ends on …")
- *
- * Never throws — returns null on any error.
- */
 function buildOfferFields() {
   try {
     const text = (config.menuOfferText ?? '').trim();
@@ -116,18 +117,19 @@ function buildOfferFields() {
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function handler(ctx) {
-  const { prefix, args, sock, chat: jid, rawMessage } = ctx;
+  const { prefix, args, sock, chat: jid, rawMessage, pushName } = ctx;
   const query = args[0]?.toLowerCase().trim();
 
-  // ── Detail view (.help <command>) ─────────────────────────────────────────
+  // ── Detail view: .help <command> ──────────────────────────────────────────
   if (query) {
     const entry = findCommand(query);
+
     if (!entry) {
       return sendInteractive(sock, jid, {
-        header:  '❌ Not Found',
-        body:    `No command found for \`${prefix}${query}\`.\n\nUse the menu to browse all available commands.`,
+        header:  'Not Found',
+        body:    `No command matched \`${prefix}${query}\`.\n\nUse the menu to browse available commands.`,
         footer:  BRAND_FOOTER,
-        buttons: [quickReply('📋 Open Menu', 'open_menu')],
+        buttons: [quickReply('← Open Menu', 'open_menu')],
       }, rawMessage);
     }
 
@@ -139,65 +141,47 @@ export async function handler(ctx) {
     const body =
       `${catIcon(m.category)} *${prefix}${m.name}*\n` +
       `_${m.description ?? 'No description.'}_\n\n` +
-      `📂 Category  : ${capitalize(m.category ?? 'general')}\n` +
-      `🔗 Aliases   : ${aliasText}\n` +
-      `⏱ Cooldown  : ${m.cooldown ?? 0}s\n` +
-      `🔐 Access    : ${permLabel(m)}`;
+      `Category  : ${capitalize(m.category ?? 'general')}\n` +
+      `Aliases   : ${aliasText}\n` +
+      `Cooldown  : ${m.cooldown ?? 0}s\n` +
+      `Access    : ${permLabel(m)}`;
 
     return sendInteractive(sock, jid, {
       header:  `${prefix}${m.name}`,
       body,
       footer:  BRAND_FOOTER,
       buttons: [
-        quickReply('📋 Back to Menu', 'back_menu'),
+        quickReply('← Back to Menu', 'back_menu'),
         quickReply(`▶ Run ${prefix}${m.name}`, `use_${m.name}`),
       ],
     }, rawMessage);
   }
 
-  // ── Full menu (.menu / .help with no args) ─────────────────────────────────
-  //
-  // cv3inx native API: { image, caption, nativeFlow, footer, ...offerFields }
-  //
-  // Assembly path in cv3inx generateWAMessageContent:
-  //   1. image key → prepareWAMessageMedia → m = { imageMessage }
-  //   2. nativeFlow → prepareNativeFlowButtons(message):
-  //        • reads offerText/offerUrl/offerCode/offerExpiration from message
-  //        • builds limited_time_offer block inside nativeFlowMessage.messageParamsJson
-  //   3. caption → interactiveMessage.body = { text: caption }
-  //   4. Object.assign(interactiveMessage.header, m)  ← merges imageMessage
-  //   5. footer  → interactiveMessage.footer = { text: footer }
-  //
-  // Button IDs (cmd_owner, cmd_channel, cmd_help) are routed by handlers/button.js.
+  // ── Full menu: .menu / .help ───────────────────────────────────────────────
 
   const cats      = getCategoryNames();
-  const sections  = cats
-    .map(cat => {
-      const cmds = getByCategory(cat);
-      return cmds.length ? { title: cat, rows: cmds } : null;
-    })
-    .filter(Boolean);
-  const totalCmds = sections.reduce((n, s) => n + s.rows.length, 0);
+  const totalCmds = cats.reduce((n, cat) => n + getByCategory(cat).length, 0);
+  const botName   = config.botName ?? 'Yuzuki AI';
+  const version   = config.version ?? '2.0.0';
 
-  const botName = config.botName ?? 'Yuzuki AI';
-  const version = config.version ?? '2.0.0';
+  // Experience-first caption — breathable, no command walls
+  const experienceLines = EXPERIENCES
+    .map(e => `${e.icon} *${e.label}*\n_${e.desc}_`)
+    .join('\n\n');
 
   const caption =
-    `🌸 *${botName}*  —  v${version}\n\n` +
-    `✨ *${totalCmds} commands*  ·  *${sections.length} categories*\n` +
-    `Type \`${prefix}help <command>\` to see details.`;
+    `${getGreeting(pushName)}\n\n` +
+    `${experienceLines}\n\n` +
+    `${totalCmds} commands  ·  v${version}`;
 
-  // 3 quick_reply buttons — cv3inx { text, id } format
+  // Navigation buttons — help users move through the product
   const menuButtons = [
-    { text: '👑 Owner',   id: 'cmd_owner'   },
-    { text: '📢 Channel', id: 'cmd_channel' },
-    { text: '📋 Help',    id: 'cmd_help'    },
+    { text: '🧠 AI Chat',  id: 'cmd_ai'    },
+    { text: '📊 Bot Info', id: 'cmd_info'  },
+    { text: '👑 Owner',    id: 'cmd_owner' },
   ];
 
-  // Hero image — resolved by category from assets/hero/menu/ or env/fallback URL
-  const heroImage = getRandomHeroImage('menu');
-
-  // Native offer card — injected only when configured
+  const heroImage   = getRandomHeroImage('menu');
   const offerFields = buildOfferFields();
 
   try {
@@ -208,22 +192,19 @@ export async function handler(ctx) {
         caption,
         nativeFlow: menuButtons,
         footer:     BRAND_FOOTER,
-        // Spread offer fields at top level — cv3inx reads them in prepareNativeFlowButtons
         ...(offerFields ?? {}),
       },
       rawMessage ? { quoted: rawMessage } : {},
     );
-  } catch (e) {
+  } catch {
     // Plain-text fallback — menu never goes silent
     const lines = [
-      `*${botName}* — Commands\n`,
-      ...sections.map(sec => [
-        `*${catIcon(sec.title)} ${capitalize(sec.title)}*`,
-        ...sec.rows.map(({ meta: m }) =>
-          `  ${prefix}${m.name} — ${m.description ?? ''}`),
-        '',
-      ]).flat(),
-      `_Use \`${prefix}help <command>\` for details._`,
+      `*${botName}*  ·  v${version}\n`,
+      getGreeting(pushName),
+      '',
+      ...EXPERIENCES.map(e => `${e.icon} *${e.label}* — ${e.desc}`),
+      '',
+      `_Type \`${prefix}help <command>\` for details._`,
     ];
     await sock.sendMessage(
       jid,
