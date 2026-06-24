@@ -1,5 +1,5 @@
 /**
- * AIManager — Phase 6
+ * AIManager — Phase 7
  *
  * Unified AI provider abstraction with auto-detection, priority ordering,
  * and automatic fallback chain.
@@ -8,15 +8,26 @@
  *   1. Groq          — fast, free tier, needs GROQ_API_KEY
  *   2. Gemini        — free tier, needs GEMINI_API_KEY
  *   3. OpenRouter    — free models, needs OPENROUTER_API_KEY
- *   4. Pollinations  — zero-key, always available (last resort)
+ *   4. OpenAI        — needs OPENAI_API_KEY
+ *   5. Puter         — free credits, needs PUTER_API_KEY
+ *   6. Pollinations  — zero-key, always available (last resort)
  *
- * Public API:
- *   init()                         — detect available providers
- *   chat(chatJid, senderJid, text, opts?) → { text, tokens, model, provider }
- *   getAvailableProviders()        → provider meta[]
- *   getActiveProvider()            → provider name
- *   setProvider(name)              → boolean
- *   status()                       → diagnostic object
+ * ── Command-facing API (Phase 7) ─────────────────────────────────────────────
+ *
+ *   generate({ prompt, provider?, model?, maxTokens?, temperature? })
+ *     → { success: true,  provider, text, usage: { tokens } }
+ *     → { success: false, error: string }
+ *
+ *   All AI commands must use this form. It handles provider selection,
+ *   fallback, latency logging, and error normalisation automatically.
+ *
+ * ── Lower-level APIs (internal / compat) ─────────────────────────────────────
+ *
+ *   chat(chatJid, senderJid, text, opts?)   — full conversation turn
+ *   getAvailableProviders()                 — provider meta[]
+ *   getActiveProvider()                     → provider name
+ *   setProvider(name)                       → boolean
+ *   status()                               → diagnostic object
  */
 import { log } from '../../utils/logger.js';
 import { config } from '../../config/index.js';
@@ -31,10 +42,12 @@ const PROVIDER_MODULES = [
   () => import('./providers/gemini.js'),
   () => import('./providers/groq.js'),
   () => import('./providers/openrouter.js'),
+  () => import('./providers/openai.js'),
+  () => import('./providers/puter.js'),
   () => import('./providers/pollinations.js'),
 ];
 
-const PROVIDER_NAMES = ['gemini', 'groq', 'openrouter', 'pollinations'];
+const PROVIDER_NAMES = ['gemini', 'groq', 'openrouter', 'openai', 'puter', 'pollinations'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -128,18 +141,29 @@ export function clearProvider() {
   setSetting('ai_provider', '');
 }
 
-// ── Core: generate with fallback ──────────────────────────────────────────────
+// ── Internal: raw generate with fallback ──────────────────────────────────────
 
 /**
- * generate(messages, opts?) → { text, tokens, model, provider }
+ * _generate(messages, opts?) → { text, tokens, model, provider }
  *
- * Tries providers in order. On error, logs the failure and tries next.
+ * Internal low-level generate. Tries providers in chain order.
  * Throws only when ALL providers fail.
+ * Commands should use the high-level generate({ prompt }) API instead.
  */
-export async function generate(messages, opts = {}) {
-  const chain = _preferred
-    ? [_preferred, ..._chain.filter(n => n !== _preferred)]
-    : [..._chain];
+async function _generate(messages, opts = {}) {
+  // If a specific provider was requested in opts, honour it (pin for this call only)
+  const requestedProvider = opts.provider && opts.provider !== 'auto'
+    ? opts.provider
+    : null;
+
+  let chain;
+  if (requestedProvider && _chain.includes(requestedProvider)) {
+    chain = [requestedProvider, ..._chain.filter(n => n !== requestedProvider)];
+  } else if (_preferred) {
+    chain = [_preferred, ..._chain.filter(n => n !== _preferred)];
+  } else {
+    chain = [..._chain];
+  }
 
   if (chain.length === 0) {
     throw new Error('No AI providers available. Configure at least one API key.');
@@ -154,8 +178,8 @@ export async function generate(messages, opts = {}) {
     try {
       log.debug(`[ai:manager] Trying provider: ${name}`);
       const result = await mod.generate(messages, opts);
-      if (name !== chain[0]) {
-        log.info(`[ai:manager] Fallback succeeded via ${name}`);
+      if (requestedProvider && name !== requestedProvider) {
+        log.info(`[AI] provider=${name} status=fallback`);
       }
       return result;
     } catch (e) {
@@ -167,30 +191,92 @@ export async function generate(messages, opts = {}) {
   throw new Error(`All AI providers failed:\n${errors.join('\n')}`);
 }
 
+// ── Command-facing API ────────────────────────────────────────────────────────
+
+/**
+ * generate(promptOptsOrMessages, legacyOpts?) → StandardResult | LegacyResult
+ *
+ * ── New command API (Phase 7) ─────────────────────────────────────────────────
+ *
+ *   await ai.generate({ prompt, provider?, model?, maxTokens?, temperature? })
+ *   → { success: true,  provider, text, usage: { tokens, model } }
+ *   → { success: false, error: string }
+ *
+ *   provider: "auto" (default) | "gemini" | "groq" | "openrouter" |
+ *             "openai" | "puter" | "pollinations"
+ *
+ * ── Legacy API (backward compat) ─────────────────────────────────────────────
+ *
+ *   await ai.generate(messages[], opts?)
+ *   → { text, tokens, model, provider }
+ *
+ *   Detected when the first argument is an Array.
+ *   Kept so the compat shim (services/ai.js) continues to work unchanged.
+ */
+export async function generate(promptOptsOrMessages, legacyOpts = {}) {
+  // ── Legacy path: generate(messages[], opts) ──────────────────────────────
+  if (Array.isArray(promptOptsOrMessages)) {
+    return _generate(promptOptsOrMessages, legacyOpts);
+  }
+
+  // ── New command path: generate({ prompt, provider, ... }) ────────────────
+  const {
+    prompt,
+    provider = 'auto',
+    model,
+    maxTokens,
+    temperature,
+    timeoutMs,
+    context,      // optional: additional context string prepended as system msg
+  } = promptOptsOrMessages ?? {};
+
+  if (!prompt && !context) {
+    return { success: false, error: 'generate(): prompt is required' };
+  }
+
+  // Build messages array from prompt + optional context
+  const messages = [];
+  if (context) {
+    messages.push({ role: 'system', content: String(context) });
+  }
+  messages.push({ role: 'user', content: String(prompt ?? '') });
+
+  const opts = { provider, model, maxTokens, temperature, timeoutMs };
+
+  const startMs = Date.now();
+  try {
+    const raw     = await _generate(messages, opts);
+    const latency = Date.now() - startMs;
+
+    log.info(`[AI] provider=${raw.provider} status=success latency=${latency}ms`);
+
+    return {
+      success:  true,
+      provider: raw.provider,
+      text:     raw.text,
+      usage: {
+        tokens: raw.tokens ?? 0,
+        model:  raw.model  ?? model ?? 'unknown',
+      },
+    };
+  } catch (e) {
+    const latency = Date.now() - startMs;
+    log.error(`[AI] provider=${provider} status=failed latency=${latency}ms error=${e.message}`);
+
+    return {
+      success: false,
+      error:   e.message,
+    };
+  }
+}
+
 // ── High-level chat orchestrator ──────────────────────────────────────────────
 
 /**
  * chat(chatJid, senderJid, userText, opts?) → { text, tokens, model, provider }
  *
- * Full conversation turn:
- *   1. Auto-clear stale sessions
- *   2. Load conversation history
- *   3. Load user memory → inject into system prompt
- *   4. Build messages array [system, ...history, user]
- *   5. Call generate() with fallback
- *   6. Persist turn
- *
- * @param {string} chatJid
- * @param {string} senderJid
- * @param {string} userText
- * @param {{
- *   senderName?:    string,
- *   chatName?:      string,
- *   personalityKey?: string,
- *   maxTokens?:     number,
- *   temperature?:   number,
- *   skipHistory?:   boolean,
- * }} [opts]
+ * Full conversation turn with history, memory, and system prompt.
+ * Used internally by commands/ai.js and services/ai.js.
  */
 export async function chat(chatJid, senderJid, userText, opts = {}) {
   // 1. Auto-reset stale sessions (30m idle)
@@ -205,8 +291,8 @@ export async function chat(chatJid, senderJid, userText, opts = {}) {
   // 3. Build system prompt with memory
   const memoryBlock  = recallForPrompt(senderJid, chatJid);
   const systemPrompt = buildSystemPrompt({
-    senderName:    opts.senderName,
-    chatName:      opts.chatName,
+    senderName:     opts.senderName,
+    chatName:       opts.chatName,
     personalityKey: opts.personalityKey,
     memoryBlock,
   });
@@ -218,11 +304,13 @@ export async function chat(chatJid, senderJid, userText, opts = {}) {
     { role: 'user',   content: userText },
   ];
 
-  // 5. Generate
-  const result = await generate(messages, {
+  // 5. Generate (via internal _generate to get raw result)
+  const startMs = Date.now();
+  const result  = await _generate(messages, {
     maxTokens:   opts.maxTokens,
     temperature: opts.temperature,
   });
+  const latency = Date.now() - startMs;
 
   // 6. Persist
   try {
@@ -231,6 +319,7 @@ export async function chat(chatJid, senderJid, userText, opts = {}) {
     log.error(`[ai:manager] History write failed: ${dbErr.message}`);
   }
 
+  log.info(`[AI] provider=${result.provider} status=success latency=${latency}ms`);
   log.info(`[ai:manager] ${chatJid} | ${result.provider} | ${result.tokens}tok | "${userText.slice(0, 40)}"`);
   return result;
 }
