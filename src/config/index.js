@@ -19,9 +19,7 @@ export const config = Object.freeze({
   publicMode:           bool(process.env.PUBLIC_MODE,   true),
 
   // ── AI providers ─────────────────────────────────────────────────────────
-  // AI_PROVIDER: auto | groq | gemini | openrouter | openai | puter | pollinations
   aiProvider:           process.env.AI_PROVIDER        ?? 'auto',
-  // AI_FALLBACK_CHAIN: comma-separated priority order, e.g. "groq,gemini,openrouter,puter"
   aiFallbackChain:      process.env.AI_FALLBACK_CHAIN  ?? '',
 
   // Groq — free tier: https://console.groq.com
@@ -32,7 +30,7 @@ export const config = Object.freeze({
   geminiApiKey:         process.env.GEMINI_API_KEY      ?? '',
   geminiModel:          process.env.GEMINI_MODEL        ?? 'gemini-2.0-flash-lite',
 
-  // OpenRouter — free models (use :free suffix): https://openrouter.ai
+  // OpenRouter — free models: https://openrouter.ai
   openrouterApiKey:     process.env.OPENROUTER_API_KEY  ?? '',
   openrouterModel:      process.env.OPENROUTER_MODEL    ?? 'meta-llama/llama-3.1-8b-instruct:free',
 
@@ -40,12 +38,18 @@ export const config = Object.freeze({
   openaiApiKey:         process.env.OPENAI_API_KEY      ?? '',
   openaiModel:          process.env.OPENAI_MODEL        ?? 'gpt-4o-mini',
 
-  // Puter — free credits (sign up at https://puter.com, get key from dev-center)
+  // Puter — free credits: https://puter.com → dev-center → API Keys
   puterApiKey:          process.env.PUTER_API_KEY       ?? '',
   puterModel:           process.env.PUTER_MODEL         ?? 'gpt-4o-mini',
 
   // Pollinations — no API key required (always available as fallback)
   pollinationsModel:    process.env.POLLINATIONS_MODEL  ?? 'openai-large',
+
+  // ── Hero pool ─────────────────────────────────────────────────────────────
+  // MENU_HERO_MODE: random (default) | static
+  // MENU_HERO_IMAGE: filename within assets/heroes/ used when mode=static
+  menuHeroMode:         process.env.MENU_HERO_MODE  ?? 'random',
+  menuHeroImage:        process.env.MENU_HERO_IMAGE ?? '',
 
   // ── Branding / channel ───────────────────────────────────────────────────
   officialChannelJid:   process.env.OFFICIAL_CHANNEL_JID ?? '',
