@@ -1,21 +1,17 @@
 /**
- * Message Handler Pipeline — Phase 5 / Phase 7 hardened / Phase 2.5 repair
+ * Message Handler Pipeline — Phase 3 patch
+ *
+ * PATCH CHANGES vs Phase 2.5:
+ *   • handlePassiveAI: adds suggestedPrompts to sendAIRichResponse call.
+ *     Passive DM responses now include the same follow-up buttons as the
+ *     explicit .ai command, so suggest_* routing works in both paths.
+ *   • All other pipeline logic unchanged.
  *
  * Flow:
  *   ctx → filters → DB touch → stat → auto-read → auto-typing
  *       → command routing (prefixed messages)
- *       → button response routing (interactiveResponseMessage | nativeFlowResponseMessage | buttonsResponseMessage)
- *       → passive AI DM trigger (non-prefixed DMs, when enabled)
- *
- * Phase 2.5 change:
- *   Step 6b now detects ALL three button response content types:
- *     • interactiveResponseMessage   — primary NativeFlow response format
- *     • nativeFlowResponseMessage    — top-level variant (cv3inx fork, some WA client versions)
- *     • buttonsResponseMessage       — legacy plain-button format
- *   Each is delegated to routeButtonResponse, which does its own resilient
- *   multi-source extraction and logs exactly which data path was used.
- *
- * handleMessage() is always async and never throws to its caller.
+ *       → button response routing
+ *       → passive AI DM trigger
  */
 import { log }            from '../utils/logger.js';
 import { touchUser }      from '../database/store.js';
@@ -36,13 +32,10 @@ import {
   parseAIText,
 } from '../services/rich-messages.js';
 
-// ── Button response content types ─────────────────────────────────────────────
-// WhatsApp / cv3inx delivers quick-reply button taps as one of these three
-// content types depending on the WA client version and fork behavior.
 const BUTTON_CONTENT_TYPES = new Set([
-  'interactiveResponseMessage',   // primary NativeFlow tap response
-  'nativeFlowResponseMessage',    // top-level variant observed in cv3inx fork
-  'buttonsResponseMessage',       // legacy plain-button format
+  'interactiveResponseMessage',
+  'nativeFlowResponseMessage',
+  'buttonsResponseMessage',
 ]);
 
 // ── Passive DM handler ────────────────────────────────────────────────────────
@@ -92,13 +85,20 @@ async function handlePassiveAI(sock, ctx) {
   const parsed = parseAIText(result.text);
   try { await sendReaction(sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
 
+  // PATCH: add suggestedPrompts so passive DM replies include follow-up buttons.
+  // These route through button.js suggest_* → .ai <display_text> (Phase 3 fix).
+  const suggestedPrompts = parsed.codeBlocks.length
+    ? ['Explain this code', 'Improve it', 'Add comments']
+    : ['Continue', 'Explain more', 'Give example'];
+
   try {
     await sendAIRichResponse(sock, chatJid, {
-      text:       parsed.text,
-      codeBlocks: parsed.codeBlocks,
-      provider:   result.provider,
-      model:      result.model,
-      tokens:     result.tokens,
+      text:            parsed.text,
+      codeBlocks:      parsed.codeBlocks,
+      suggestedPrompts,
+      provider:        result.provider,
+      model:           result.model,
+      tokens:          result.tokens,
     }, ctx.rawMessage);
   } catch (e) {
     log.error(`[ai:passive] Send error: ${e.message}`);
@@ -110,27 +110,22 @@ async function handlePassiveAI(sock, ctx) {
 
 export async function handleMessage(sock, ctx) {
   try {
-    // ── 1. Ignore echo / status ────────────────────────────────────────────
     if (ctx.isStatus)    return false;
     if (ctx.isBroadcast) return false;
 
-    // ── 2. DB touch — upsert sender ────────────────────────────────────────
     if (ctx.sender && !ctx.fromMe) {
       try { touchUser(ctx.sender, ctx.pushName || null); }
       catch (dbErr) { log.error(`[pipeline] DB touchUser: ${dbErr.message}`); }
     }
 
-    // ── 3. Increment message stat ──────────────────────────────────────────
     try { incrementStat('messages_total'); }
     catch { /* non-critical */ }
 
-    // ── 4. Auto-read ───────────────────────────────────────────────────────
     if (config.autoRead && !ctx.fromMe) {
       try { await sock.readMessages([ctx.key]); }
       catch { /* best-effort */ }
     }
 
-    // ── 5. Auto-typing indicator ───────────────────────────────────────────
     if (config.autoTyping && !ctx.fromMe && ctx.body) {
       try {
         await sock.sendPresenceUpdate('composing', ctx.chat);
@@ -138,23 +133,11 @@ export async function handleMessage(sock, ctx) {
       } catch { /* best-effort */ }
     }
 
-    // ── 6. Command routing (prefixed messages) ─────────────────────────────
     if (ctx.body?.startsWith(config.prefix)) {
       await routeCommand(sock, ctx);
       return true;
     }
 
-    // ── 6b. Button response routing ────────────────────────────────────────
-    //
-    // WhatsApp delivers quick-reply taps as one of three content types:
-    //   • interactiveResponseMessage   — primary NativeFlow response
-    //   • nativeFlowResponseMessage    — top-level variant in cv3inx fork
-    //   • buttonsResponseMessage       — legacy plain-button format
-    //
-    // Placed BEFORE passive AI: button payloads must not fall through
-    // to the AI handler which would treat them as chat messages.
-    //
-    // !ctx.fromMe guard: button responses come from the user, never the bot.
     if (BUTTON_CONTENT_TYPES.has(ctx.contentType) && !ctx.fromMe) {
       log.debug(
         `[pipeline] button tap — contentType=${ctx.contentType}` +
@@ -164,7 +147,6 @@ export async function handleMessage(sock, ctx) {
       return true;
     }
 
-    // ── 7. Passive AI DM trigger ───────────────────────────────────────────
     if (
       !ctx.fromMe     &&
       !ctx.isGroup    &&
