@@ -196,6 +196,55 @@
     }
   }
 
+
+  // ── Interactive Message with Hero Image ───────────────────────────────────────
+
+  /**
+   * sendInteractiveWithImage(sock, jid, opts, quoted?) → Promise<void>
+   *
+   * Like sendInteractive but with a hero image in the card.
+   * Uses cv3inx's { image, caption, nativeFlow, footer } path — the same code
+   * path that help.js uses for the main menu — so it is proven to work.
+   *
+   * When 'image' is omitted or the image path throws, falls back automatically
+   * to sendInteractive (text-only header) so the card is never silent.
+   *
+   * Button objects from quickReply / ctaCall / ctaUrl / ctaCopy are passed
+   * directly as the 'nativeFlow' array; cv3inx processes both the simple
+   * { text, id } format AND the proto-level { name, buttonParamsJson } format.
+   *
+   * @param {object} opts
+   * @param {{ url: string }|{ data: Buffer }} [opts.image]  — getRandomHeroImage()
+   * @param {string}   opts.body     — caption / body text
+   * @param {string}   [opts.footer] — footer text
+   * @param {Array}    opts.buttons  — NativeFlowButton[]
+   * @param {string}   [opts.header] — used only in the text fallback path
+   */
+  export async function sendInteractiveWithImage(sock, jid, opts, quoted) {
+    const { image, body, footer, buttons: btns = [] } = opts;
+
+    if (!image) {
+      return sendInteractive(sock, jid, opts, quoted);
+    }
+
+    try {
+      await sock.sendMessage(
+        jid,
+        {
+          image,
+          caption:    body,
+          nativeFlow: btns,
+          ...(footer ? { footer } : {}),
+        },
+        quoted ? { quoted } : {},
+      );
+    } catch (e) {
+      log.warn(`[rich-messages] sendInteractiveWithImage image path failed (${e.message}) — text fallback`);
+      // Fallback: send without image so the interactive card always appears
+      await sendInteractive(sock, jid, { ...opts, image: undefined }, quoted);
+    }
+  }
+
   // ── Poll ──────────────────────────────────────────────────────────────────────
 
   /**
@@ -762,6 +811,7 @@
   export const RichMessageService = {
     // NativeFlow / Interactive
     sendInteractive,
+    sendInteractiveWithImage,
     sendCarousel,
     sendCollection,
     sendList,
