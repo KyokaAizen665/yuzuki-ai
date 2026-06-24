@@ -368,7 +368,11 @@
   /**
    * sendTable(sock, jid, headers, rows, title?, quoted?) → Promise<void>
    *
-   * Renders a table as monospace ASCII art using Unicode box-drawing chars.
+   * @deprecated Use renderTable() from services/table-renderer.js instead.
+   *             This function renders ASCII/Unicode box-drawing art which is
+   *             prohibited in the Yuzuki style guide (no ASCII boxes, no fake UI).
+   *             Retained as an internal last-resort fallback ONLY.
+   *             External callers: use renderTable(ctx, { title, columns, rows }).
    *
    * @param {string[]} headers  — column names
    * @param {Array[]}  rows     — array of row arrays
@@ -499,6 +503,59 @@
     }
   }
 
+  // ── Native table helper (used by sendAIRichResponse) ─────────────────────
+  //
+  // Renders a parsed markdown table using native WhatsApp structures.
+  // 2-col ≤12 rows → sendList (native tappable list).
+  // Multi-col or sendList failure → sendInteractive with WA-markdown body.
+  // No ASCII/box-drawing is ever produced.
+
+  async function _sendNativeTable(sock, jid, tbl, footer, quoted) {
+    const { headers = [], rows = [], title } = tbl;
+    if (!rows.length) return;
+
+    const isKeyValue = headers.length === 2 && rows.length <= 12;
+
+    if (isKeyValue) {
+      try {
+        await sendList(sock, jid, {
+          title:       title ?? headers[0] ?? 'Data',
+          description: '',
+          buttonText:  'View',
+          footer:      footer ?? '',
+          sections: [{
+            title: title ?? '',
+            rows:  rows.map((row, i) => ({
+              id:          `ai_tbl_${i}`,
+              title:       String(row[0] ?? ''),
+              description: String(row[1] ?? ''),
+            })),
+          }],
+        }, quoted);
+        return;
+      } catch { /* fall through to interactive */ }
+    }
+
+    // Multi-column or sendList failure → WA-markdown interactive body
+    const sep      = ' · ';
+    const bodyLines = [
+      title ? `*${title}*` : null,
+      '*' + headers.join(sep) + '*',
+      ...rows.map(row => row.map(c => String(c ?? '')).join(sep)),
+    ].filter(Boolean);
+
+    await sendInteractive(sock, jid, {
+      header:  title ?? 'Table',
+      body:    bodyLines.join('\n').slice(0, 1024),
+      footer:  footer ?? '',
+      buttons: [],
+    }, quoted).catch(() => {
+      // absolute last resort — plain text, no box drawing
+      const text = bodyLines.join('\n');
+      return sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
+    });
+  }
+
   /**
    * sendAIRichResponse(sock, jid, aiResponse, quoted?) → Promise<void>
    *
@@ -543,15 +600,12 @@
       quickReply(p.slice(0, 20), `suggest_${i}`),
     );
 
-    const [firstTable, ...restTables] = tables;
-
     await sendRichResponse(sock, jid, { text, sections, actions, footer, split: true }, quoted);
 
-    if (firstTable) {
-      await sendTable(sock, jid, firstTable.headers, firstTable.rows, firstTable.title, quoted);
-    }
-    for (const tbl of restTables) {
-      await sendTable(sock, jid, tbl.headers, tbl.rows, tbl.title);
+    // Render parsed markdown tables natively — no ASCII/box-drawing
+    for (const [i, tbl] of tables.entries()) {
+      await _sendNativeTable(sock, jid, tbl, footer, i === 0 ? quoted : undefined)
+        .catch(e => log.debug(`[rich-messages] table ${i} render skipped: ${e.message}`));
     }
   }
 

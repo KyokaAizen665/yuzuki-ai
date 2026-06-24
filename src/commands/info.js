@@ -1,17 +1,22 @@
 /**
- * Command: info
+ * Command: info — Phase 9 upgrade
+ *
+ * PATCH: sendTable() (ASCII box-drawing) replaced by renderTable()
+ *        from services/table-renderer.js. Stats now render as a
+ *        NativeFlow interactive card — no ASCII art.
+ *
  * Bot runtime info + stats table + owner CTA CALL.
  */
-import { config } from '../config/index.js';
-import { getStat } from '../database/store.js';
+import { config }          from '../config/index.js';
+import { getStat }         from '../database/store.js';
 import { formatUptime, formatBytes } from '../utils/helpers.js';
 import { getCommandCount } from '../plugins/registry.js';
 import {
-  sendTable,
   sendInteractive,
   ctaCall,
   quickReply,
-} from '../services/rich-messages.js';
+}                          from '../services/rich-messages.js';
+import { renderTable }     from '../services/table-renderer.js';
 
 export const meta = {
   name:        'info',
@@ -36,35 +41,21 @@ export async function handler(ctx) {
   const plugins = getCommandCount();
   const heapPct = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(0);
 
-  // Render stats as ASCII table
-  try {
-    await sendTable(sock, jid,
-      ['Metric', 'Value'],
-      [
-        ['🤖 Bot',       `${config.botName ?? 'Yuzuki AI'} v${config.version}`],
-        ['⏱ Uptime',     uptime],
-        ['🧠 Memory',    `${heap} / ${rss} RSS (${heapPct}%)`],
-        ['💬 Messages',  String(msgs)],
-        ['⚡ Commands',  String(cmds)],
-        ['🔌 Plugins',   String(plugins)],
-        ['🛠 Runtime',   `Node.js ${process.version}`],
-        ['🔗 Library',   'cv3inx/baileys'],
-      ],
-      `${config.botName ?? 'Yuzuki AI'} — Live Stats`,
-      rawMessage,
-    );
-  } catch {
-    // Plain-text fallback
-    await ctx.reply(
-      `*${config.botName ?? 'Yuzuki AI'}* v${config.version}\n\n` +
-      `⏱ Uptime   : ${uptime}\n` +
-      `🧠 Memory   : ${heap} / ${rss} (${heapPct}%)\n` +
-      `💬 Messages : ${msgs}\n` +
-      `⚡ Commands : ${cmds}\n` +
-      `🔌 Plugins  : ${plugins}\n` +
-      `Node.js ${process.version} · cv3inx`
-    );
-  }
+  await renderTable(ctx, {
+    title:   `${config.botName ?? 'Yuzuki AI'} — Live Stats`,
+    columns: ['Metric', 'Value'],
+    rows: [
+      ['🤖 Bot',      `${config.botName ?? 'Yuzuki AI'} v${config.version}`],
+      ['⏱ Uptime',    uptime],
+      ['🧠 Memory',   `${heap} / ${rss} RSS (${heapPct}%)`],
+      ['💬 Messages', String(msgs)],
+      ['⚡ Commands', String(cmds)],
+      ['🔌 Plugins',  String(plugins)],
+      ['🛠 Runtime',  `Node.js ${process.version}`],
+      ['🔗 Library',  'cv3inx/baileys'],
+    ],
+    footer: BRAND_FOOTER,
+  });
 
   // CTA interactive card with owner contact
   const ownerNum = config.ownerNumber;

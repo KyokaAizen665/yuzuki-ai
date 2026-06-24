@@ -1,6 +1,11 @@
 /**
- * Command: channel
- * Newsletter / WhatsApp Channel management. Phase 12.
+ * Command: channel — Phase 9 upgrade
+ *
+ * PATCH: sendTable() (ASCII box-drawing) replaced by renderTable()
+ *        from services/table-renderer.js. Channel metadata now renders
+ *        as NativeFlow interactive cards — no ASCII art.
+ *
+ * Newsletter / WhatsApp Channel management.
  *
  * Usage:
  *   .channel              — show Yuzuki official channel info
@@ -15,13 +20,13 @@
 import {
   sendInteractive,
   sendInteractiveWithImage,
-  sendTable,
   quickReply,
 } from '../services/rich-messages.js';
-import { getRandomHeroImage } from '../services/hero-images.js';
+import { renderTable }          from '../services/table-renderer.js';
+import { getRandomHeroImage }   from '../services/hero-images.js';
 import { getNewsletterService } from '../services/newsletter.js';
-import { config } from '../config/index.js';
-import { log } from '../utils/logger.js';
+import { config }               from '../config/index.js';
+import { log }                  from '../utils/logger.js';
 
 export const meta = {
   name:        'channel',
@@ -34,7 +39,6 @@ export const meta = {
 
 const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;
 
-// Official Yuzuki channel JID (update when channel is created)
 const OFFICIAL_CHANNEL_JID = config.officialChannelJid ?? null;
 
 const USAGE_TEXT =
@@ -54,7 +58,6 @@ export async function handler(ctx) {
   const { args, sock, chat: jid, rawMessage, isOwner } = ctx;
   const sub = args[0]?.toLowerCase();
 
-  // Helper — get the newsletter service (may not be initialized)
   function ns() {
     try { return getNewsletterService(); } catch { return null; }
   }
@@ -80,22 +83,21 @@ export async function handler(ctx) {
       buttons,
     }, rawMessage);
 
-    // If official channel is configured, show live metadata
     if (OFFICIAL_CHANNEL_JID) {
       try {
         const svc  = ns();
         const info = svc ? await svc.metadata('jid', OFFICIAL_CHANNEL_JID) : null;
         if (info) {
-          await sendTable(sock, jid,
-            ['Field', 'Value'],
-            [
+          await renderTable(ctx, {
+            title:   'Official Channel Stats',
+            columns: ['Field', 'Value'],
+            rows: [
               ['📛 Name',        info.name ?? 'Yuzuki AI'],
               ['👥 Subscribers', String(info.subscriberCount ?? '—')],
               ['✅ Verified',    info.verified ? 'Yes' : 'No'],
             ],
-            'Official Channel Stats',
-            rawMessage,
-          );
+            footer: BRAND_FOOTER,
+          });
         }
       } catch (e) {
         log.debug(`[channel] Official channel metadata failed: ${e.message}`);
@@ -124,17 +126,18 @@ export async function handler(ctx) {
       const info = await svc.metadata('jid', channelJid);
       if (!info) return ctx.reply('❌ Channel not found or inaccessible.');
 
-      await sendTable(sock, jid,
-        ['Field', 'Value'],
-        [
+      await renderTable(ctx, {
+        title:   `Channel: ${info.name ?? channelJid}`,
+        columns: ['Field', 'Value'],
+        rows: [
           ['📛 Name',        info.name ?? '—'],
           ['📝 Description', (info.description ?? '—').slice(0, 40)],
           ['👥 Subscribers', String(info.subscriberCount ?? '—')],
           ['✅ Verified',    info.verified ? 'Yes' : 'No'],
         ],
-        `Channel: ${info.name ?? channelJid}`,
-        rawMessage,
-      );
+        footer: BRAND_FOOTER,
+      });
+
       await sendInteractive(sock, jid, {
         body:    `_${info.description ?? 'No description'}_`,
         footer:  BRAND_FOOTER,
