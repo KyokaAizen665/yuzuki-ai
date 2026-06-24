@@ -72,4 +72,9 @@ export const config = Object.freeze({
   maxReconnectAttempts: num(process.env.MAX_RECONNECT,   10),
   reconnectDelay:       num(process.env.RECONNECT_DELAY, 5000),
   debug:                bool(process.env.DEBUG,          false),
+
+  // ── Lab flags ────────────────────────────────────────────────────────────
+  // LAB_COMMERCE_MODE=true  unlocks .teststorefront/.testcollection/etc.
+  // Never set this in production — lab commands send raw proto payloads.
+  labCommerceMode:      bool(process.env.LAB_COMMERCE_MODE, false),
 });
