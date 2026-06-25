@@ -20,7 +20,6 @@
 import { log } from '../utils/logger.js';
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   quickReply,
   ctaUrl,
 } from '../services/rich-messages.js';
@@ -352,9 +351,9 @@ async function sendHelpCard(ctx) {
       ? `✅ _Authenticated — 5000 req/hr_`
       : `⚠️ _Unauthenticated — 60 req/hr_\nSet GITHUB_PERSONAL_ACCESS_TOKEN for higher limits.`);
 
-  return sendInteractiveWithImage(sock, jid, {
-    header:  '🐙 GitHub',
-    image:   getRandomHeroImage('ai'),
+  return sendInteractive(sock, jid, {
+    header:       '🐙 GitHub',
+    contextImage: getRandomHeroImage('ai'),
     body,
     footer:  `🌸 ${config.botName}`,
     buttons: [
