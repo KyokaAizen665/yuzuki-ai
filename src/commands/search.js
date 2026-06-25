@@ -17,7 +17,6 @@
 import { log } from '../utils/logger.js';
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   quickReply,
   ctaUrl,
 } from '../services/rich-messages.js';
@@ -172,9 +171,9 @@ export async function handler(ctx) {
 
   if (!query) {
     const p = config.prefix;
-    return sendInteractiveWithImage(sock, jid, {
-      header:  '🔍 Search',
-      image:   getRandomHeroImage('ai'),
+    return sendInteractive(sock, jid, {
+      header:       '🔍 Search',
+      contextImage: getRandomHeroImage('ai'),
       body:
         `*Web Search — Commands*\n\n` +
         `• \`${p}search <query>\`         — web search\n` +
