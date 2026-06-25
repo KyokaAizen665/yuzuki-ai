@@ -401,29 +401,54 @@
    * @param {string}   [title]  — optional title above table
    */
   export async function sendTable(sock, jid, headers, rows, title, quoted) {
-    const cols    = headers.length;
-    const allRows = [headers, ...rows];
-    const widths  = Array.from({ length: cols }, (_, i) =>
-      Math.max(...allRows.map(r => String(r[i] ?? '').length)),
-    );
-
-    const topBorder = '┌' + widths.map(w => '─'.repeat(w + 2)).join('┬') + '┐';
-    const divider   = '├' + widths.map(w => '─'.repeat(w + 2)).join('┼') + '┤';
-    const botBorder = '└' + widths.map(w => '─'.repeat(w + 2)).join('┴') + '┘';
-    const fmtRow    = row =>
-      '│' + row.map((cell, i) => ` ${String(cell ?? '').padEnd(widths[i])} `).join('│') + '│';
-
-    const tableStr = [topBorder, fmtRow(headers), divider, ...rows.map(fmtRow), botBorder].join('\n');
-    const text     = title
-      ? `*${title}*\n\`\`\`\n${tableStr}\n\`\`\``
-      : `\`\`\`\n${tableStr}\n\`\`\``;
-
+    // ── Primary path: cv3inx native TABLE rich-response ───────────────────────
+    // cv3inx exposes RichSubMessageType.TABLE = 4 in lib/Types/RichType.js and
+    // toUnified() in lib/Utils/rich-message-utils.js serialises it into a
+    // GenATableUXPrimitive that WhatsApp renders as a native table card.
+    // The same proto path is used by sendNativeAIResponse for code blocks.
     try {
-      await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
+      const richUtils = await import('baileys/lib/Utils/rich-message-utils.js');
+      const richTypes = await import('baileys/lib/Types/RichType.js');
+      if (!richUtils?.toUnified || !richTypes?.RichSubMessageType) throw new Error('rich-message-utils unavailable');
+
+      const { toUnified } = richUtils;
+      const { RichSubMessageType } = richTypes;
+      const { proto, generateWAMessageFromContent } = getBaileys();
+
+      const tableSubmessage = {
+        messageType: RichSubMessageType.TABLE,
+        tableMetadata: {
+          title: title ?? '',
+          rows: [
+            { isHeading: true,  items: headers.map(String) },
+            ...rows.map(row => ({ isHeading: false, items: row.map(c => String(c ?? '')) })),
+          ],
+        },
+      };
+
+      const unified = toUnified([tableSubmessage]);
+
+      const richMsg = proto.AIRichResponseMessage.create({
+        messageType: 1,
+        unifiedResponse: proto.AIRichResponseUnifiedResponse.create({
+          data: Buffer.from(JSON.stringify(unified)),
+        }),
+      });
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        { richResponseMessage: richMsg },
+        { userJid: sock.user?.id, quoted },
+      );
+
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+      return;
     } catch (e) {
-      log.error(`[rich-messages] sendTable failed: ${e.message}`);
-      throw e;
+      log.debug(`[rich-messages] sendTable native path failed (${e.message}) — fallback`);
     }
+
+    // ── Fallback: _sendNativeTable (list / interactive) ───────────────────────
+    await _sendNativeTable(sock, jid, { headers, rows, title }, undefined, quoted);
   }
 
   /**
@@ -536,8 +561,50 @@
     const { headers = [], rows = [], title } = tbl;
     if (!rows.length) return;
 
-    const isKeyValue = headers.length === 2 && rows.length <= 12;
+    // ── Primary: native TABLE rich-response (same path as sendTable) ──────────
+    try {
+      const richUtils = await import('baileys/lib/Utils/rich-message-utils.js');
+      const richTypes = await import('baileys/lib/Types/RichType.js');
+      if (!richUtils?.toUnified || !richTypes?.RichSubMessageType) throw new Error('unavailable');
 
+      const { toUnified } = richUtils;
+      const { RichSubMessageType } = richTypes;
+      const { proto, generateWAMessageFromContent } = getBaileys();
+
+      const tableSubmessage = {
+        messageType: RichSubMessageType.TABLE,
+        tableMetadata: {
+          title: title ?? '',
+          rows: [
+            { isHeading: true,  items: headers.map(String) },
+            ...rows.map(row => ({ isHeading: false, items: row.map(c => String(c ?? '')) })),
+          ],
+        },
+      };
+
+      const unified = toUnified([tableSubmessage]);
+
+      const richMsg = proto.AIRichResponseMessage.create({
+        messageType: 1,
+        unifiedResponse: proto.AIRichResponseUnifiedResponse.create({
+          data: Buffer.from(JSON.stringify(unified)),
+        }),
+      });
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        { richResponseMessage: richMsg },
+        { userJid: sock.user?.id, quoted },
+      );
+
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+      return;
+    } catch (e) {
+      log.debug(`[rich-messages] _sendNativeTable rich path failed (${e.message}) — fallback`);
+    }
+
+    // ── Fallback A: sendList for 2-column key-value tables ────────────────────
+    const isKeyValue = headers.length === 2 && rows.length <= 12;
     if (isKeyValue) {
       try {
         await sendList(sock, jid, {
@@ -555,11 +622,11 @@
           }],
         }, quoted);
         return;
-      } catch { /* fall through to interactive */ }
+      } catch { /* fall through */ }
     }
 
-    // Multi-column or sendList failure → WA-markdown interactive body
-    const sep      = ' · ';
+    // ── Fallback B: sendInteractive body text, then plain text ─────────────────
+    const sep       = ' · ';
     const bodyLines = [
       title ? `*${title}*` : null,
       '*' + headers.join(sep) + '*',
@@ -571,11 +638,9 @@
       body:    bodyLines.join('\n').slice(0, 1024),
       footer:  footer ?? '',
       buttons: [],
-    }, quoted).catch(() => {
-      // absolute last resort — plain text, no box drawing
-      const text = bodyLines.join('\n');
-      return sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
-    });
+    }, quoted).catch(() =>
+      sock.sendMessage(jid, { text: bodyLines.join('\n') }, quoted ? { quoted } : {})
+    );
   }
 
   /**
