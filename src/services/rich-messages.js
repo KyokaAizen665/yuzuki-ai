@@ -633,8 +633,9 @@
           ? {
               hasMediaAttachment: true,
               imageMessage: proto.Message.ImageMessage.create({
-                url:      card.imageUrl,
-                mimetype: 'image/jpeg',
+                url:        card.imageUrl,
+                mimetype:   'image/jpeg',
+                fileLength: 0,   // prevent undefined uint64 → NaN → Buffer.alloc(NaN) crash
               }),
             }
           : { hasMediaAttachment: false, title: card.header ?? '' };
