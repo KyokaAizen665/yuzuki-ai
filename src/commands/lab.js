@@ -1,550 +1,440 @@
 /**
  * Command: lab  (owner only)
  *
- * Interactive message laboratory for testing every cv3inx rich message type.
- * Safe sandbox — nothing is posted publicly, only sent to the chat where
- * the owner types the command.
+ * Menu Style Laboratory — Yuzuki AI
+ *
+ * Sends the same "Yuzuki AI" menu content through every WhatsApp message type
+ * so you can compare side-by-side how each one renders on real devices.
+ * The identical content across all types makes rendering differences obvious.
  *
  * Usage:
- *   .lab                     — show lab menu
- *   .lab list                — list all available tests
- *   .lab <test>              — run a specific test
+ *   .lab              — interactive test selector
+ *   .lab <type>       — run one specific type
+ *   .lab all          — send every type in sequence
+ *   .lab list         — plain-text list of all types
  *
- * Tests:
- *   catalog          — catalogMessage (product catalog)
- *   order            — orderMessage (shop order card)
- *   payment          — paymentMessage (payment info card)
- *   contact          — contactMessage (vCard contact)
- *   contacts         — multiple contacts in one message
- *   nativeflow       — nativeFlowMessage (button row)
- *   interactive      — interactiveMessage (NativeFlow w/ buttons)
- *   list             — listMessage (single select list)
- *   poll             — pollCreationMessage
- *   carousel         — carouselMessage (multi-card)
- *   collection       — collectionMessage (storefront card)
- *   template         — interactiveResponseMessage (template format)
- *   newsletter       — newsletter create/follow test
- *   reaction         — emoji reaction to quoted message
- *   location         — live location pin
- *   image            — high-quality image with caption
- *   video            — video with caption
- *   audio            — audio (voice note simulation)
- *   sticker          — sticker from image URL
- *   disappearing     — disappearing message (view once)
- *   mention          — mention yourself in a message
- *   forward          — forward a test message
- *
- * Aliases: laboratory, msglab
+ * Types:
+ *   interactive  — NativeFlow body + buttons  (standard)
+ *   image        — NativeFlow with hero image header
+ *   carousel     — one swipeable card per category
+ *   list         — listMessage with sections + rows
+ *   template     — hydratedTemplate quick-reply buttons
+ *   product      — productMessage (description renders dim grey) ← the trick
+ *   text         — plain markdown extendedTextMessage
+ *   contact      — contactMessage / vCard as info card
+ *   location     — locationMessage pin as decorative header
+ *   order        — orderMessage (items as command entries)
+ *   storefront   — shopStorefrontMessage commerce card
+ *   all          — every type in sequence
  */
 
-import { log }          from '../utils/logger.js';
-import { config }       from '../config/index.js';
+import { log }                from '../utils/logger.js';
+import { config }             from '../config/index.js';
+import { getRandomHeroImage } from '../services/hero-images.js';
+import { getBaileys }         from '../core/socket.js';
 import {
   sendInteractive,
   sendInteractiveWithImage,
-  sendList,
-  sendPoll,
   sendCarousel,
+  sendList,
+  sendInteractiveAsTemplate,
   sendCollection,
-  sendReaction,
+  sendProductMenu,
   quickReply,
-  ctaUrl,
-  ctaCall,
-  ctaCopy,
-  singleSelect,
 } from '../services/rich-messages.js';
-import { getRandomHeroImage }    from '../services/hero-images.js';
-import { getNewsletterService }  from '../services/newsletter.js';
-import { getBusinessService }    from '../services/business.js';
 
-export const meta = {
-  name:        'lab',
-  description: 'Owner-only message laboratory — test every cv3inx rich message type',
-  category:    'owner',
-  aliases:     ['laboratory', 'msglab'],
-  cooldown:    3,
-  permission:  'owner',
-};
+// ── Shared menu content — identical across all types for fair comparison ──────
 
-const BRAND_FOOTER = `🔬 ${config.botName ?? 'Yuzuki AI'} Lab`;
+const BOT  = config.botName ?? 'Yuzuki AI';
+const P    = config.prefix  ?? '.';
+const FOOT = `🤖 ${BOT} — Menu Style Lab`;
 
-// ── Test registry ─────────────────────────────────────────────────────────────
+const MENU_TITLE = `🤖 ${BOT}`;
+
+// Markdown body — for types that render markdown
+const MENU_BODY =
+  'Choose a category to get started:\n\n' +
+  '🧠 *AI*        — Chat, translate, summarise\n' +
+  '📥 *Download*  — YouTube, TikTok, Instagram\n' +
+  '🔍 *Search*    — Web, Wikipedia, YouTube\n' +
+  '🎮 *Fun*       — Games, memes, trivia\n' +
+  '📡 *Info*      — Weather, news, facts';
+
+// Plain text body — for types that strip markdown (product, contact, location)
+const MENU_DESC =
+  `AI · Download · Search · Fun · Info\nType ${P}help to explore all commands.`;
+
+const MENU_BUTTONS = [
+  quickReply('🧠 AI Chat',  'cmd_ai'),
+  quickReply('📥 Download', 'cmd_dl'),
+  quickReply('🔍 Search',   'cmd_search'),
+];
+
+// ── Test metadata ──────────────────────────────────────────────────────────────
 
 const TESTS = {
-  catalog:     { icon: '🛒', label: 'catalogMessage',    desc: 'Fetch + display bot product catalog' },
-  order:       { icon: '📦', label: 'orderMessage',      desc: 'Parse an orderMessage (reply to one)' },
-  payment:     { icon: '💳', label: 'paymentMessage',    desc: 'Send a payment info card' },
-  contact:     { icon: '👤', label: 'contactMessage',    desc: 'Send a single vCard contact' },
-  contacts:    { icon: '👥', label: 'multi-contact',     desc: 'Send multiple vCard contacts' },
-  nativeflow:  { icon: '🔘', label: 'nativeFlowMessage', desc: 'Raw nativeFlowMessage buttons' },
-  interactive: { icon: '🎛️', label: 'interactiveMessage', desc: 'sendInteractive() — NativeFlow standard' },
-  list:        { icon: '📋', label: 'listMessage',       desc: 'sendList() — single select list' },
-  poll:        { icon: '📊', label: 'pollMessage',       desc: 'sendPoll() — native poll' },
-  carousel:    { icon: '🎠', label: 'carouselMessage',   desc: 'sendCarousel() — multi-card scroll' },
-  collection:  { icon: '🏪', label: 'collectionMessage', desc: 'sendCollection() — storefront card' },
-  newsletter:  { icon: '📢', label: 'newsletter',        desc: 'Newsletter service test (create/info)' },
-  reaction:    { icon: '💬', label: 'reaction',          desc: 'Send emoji reaction to quoted message' },
-  location:    { icon: '📍', label: 'locationMessage',   desc: 'Send a location pin' },
-  image:       { icon: '🖼️', label: 'imageMessage',      desc: 'Send image with caption' },
-  disappearing:{ icon: '👁️', label: 'viewOnce',          desc: 'View-once / disappearing image' },
-  mention:     { icon: '@',  label: 'mentionMessage',    desc: 'Mention yourself in text' },
-  sticker:     { icon: '🎨', label: 'stickerMessage',    desc: 'Send animated sticker' },
+  interactive: {
+    icon:  '💬',
+    label: 'NativeFlow Interactive',
+    desc:  'Standard text body + buttons card — the default menu container',
+  },
+  image: {
+    icon:  '🖼️',
+    label: 'Image + NativeFlow',
+    desc:  'Hero image header with markdown body and quick-reply buttons',
+  },
+  carousel: {
+    icon:  '🎠',
+    label: 'Carousel Cards',
+    desc:  'Each category gets its own swipeable card with a button',
+  },
+  list: {
+    icon:  '📋',
+    label: 'List Message',
+    desc:  'Sections + rows — deepest text capacity, no image, no inline buttons',
+  },
+  template: {
+    icon:  '📄',
+    label: 'Hydrated Template',
+    desc:  'WA Business template format with three quick-reply buttons',
+  },
+  product: {
+    icon:  '📦',
+    label: 'Product Message ← dim text trick',
+    desc:  'description field renders dim grey automatically — no markdown needed',
+  },
+  text: {
+    icon:  '✍️',
+    label: 'Extended Text',
+    desc:  'Pure markdown — no card chrome, no buttons, maximum text freedom',
+  },
+  contact: {
+    icon:  '👤',
+    label: 'Contact Card',
+    desc:  'vCard: FN (name) = bold · ORG field = dim grey below name',
+  },
+  location: {
+    icon:  '📍',
+    label: 'Location Pin',
+    desc:  'Map thumbnail: name = bold above pin, address = dim grey below',
+  },
+  order: {
+    icon:  '🛒',
+    label: 'Order Message',
+    desc:  'orderTitle = bold, message = dim — itemCount as secondary text',
+  },
+  storefront: {
+    icon:  '🏪',
+    label: 'Shop Storefront',
+    desc:  'shopStorefrontMessage commerce card — requires a WA Business account',
+  },
 };
 
-// ── Lab menu ──────────────────────────────────────────────────────────────────
+// ── Lab selector menu ─────────────────────────────────────────────────────────
 
 async function sendLabMenu(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
-  const p = config.prefix;
 
-  const groups = [
-    {
-      title: '📨 Message Types',
-      rows: Object.entries(TESTS).slice(0, 8).map(([key, t]) => ({
-        header:      t.icon,
-        title:       t.label,
-        description: t.desc,
-        id:          `lab_${key}`,
-      })),
-    },
-    {
-      title: '🛒 Business & Rich',
-      rows: Object.entries(TESTS).slice(8, 14).map(([key, t]) => ({
-        header:      t.icon,
-        title:       t.label,
-        description: t.desc,
-        id:          `lab_${key}`,
-      })),
-    },
-    {
-      title: '📡 Media & Other',
-      rows: Object.entries(TESTS).slice(14).map(([key, t]) => ({
-        header:      t.icon,
-        title:       t.label,
-        description: t.desc,
-        id:          `lab_${key}`,
-      })),
-    },
-  ];
+  const lines = Object.entries(TESTS)
+    .map(([k, t]) => `${t.icon} *${t.label}* — \`${P}lab ${k}\`\n_${t.desc}_`)
+    .join('\n\n');
 
-  return sendList(sock, jid, {
-    header:       '🔬 Message Laboratory',
-    body:         `Select a message type to test.\n\nAll messages are sent to *this chat only* — nothing is posted publicly.\n\n${Object.keys(TESTS).length} tests available.`,
-    footer:       BRAND_FOOTER,
-    buttonText:   '📋 Open Test Menu',
-    sections:     groups,
+  return sendInteractive(sock, jid, {
+    header:  '🔬 Menu Style Lab',
+    body:    `Compare how every WA message type renders as a menu.\n\n${lines}`,
+    footer:  FOOT,
+    buttons: [
+      quickReply('🚀 Run All',     'lab_all'),
+      quickReply('📋 List Types',  'lab_list'),
+      quickReply('📦 Product Demo','lab_product'),
+    ],
   }, rawMessage);
 }
 
-// ── Individual test runners ───────────────────────────────────────────────────
+// ── Runners — one per message type ────────────────────────────────────────────
 
 const runners = {
 
-  // ── Interactive / NativeFlow ────────────────────────────────────────────────
-
+  // 1. NativeFlow text-only card
   async interactive(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_💬 *interactive* — NativeFlow body + buttons_' }).catch(() => {});
+    return sendInteractive(sock, jid, {
+      header: MENU_TITLE, body: MENU_BODY, footer: FOOT, buttons: MENU_BUTTONS,
+    }, rawMessage);
+  },
+
+  // 2. Hero image + NativeFlow
+  async image(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    const hero = getRandomHeroImage('ai') ?? { url: 'https://picsum.photos/720/400.jpg' };
+    await sock.sendMessage(jid, { text: '_🖼️ *image* — hero image header + NativeFlow buttons_' }).catch(() => {});
     return sendInteractiveWithImage(sock, jid, {
-      header:  '🎛️ Interactive Message Test',
-      image:   getRandomHeroImage('menu'),
-      body:
-        `This is a *sendInteractive()* test.\n\n` +
-        `It renders a NativeFlow interactive message with:\n` +
-        `• Header (image)\n` +
-        `• Body text (markdown)\n` +
-        `• Footer text\n` +
-        `• Up to 3 buttons\n\n` +
-        `All button types demonstrated below.`,
-      footer:  BRAND_FOOTER,
-      buttons: [
-        quickReply('✅ Quick Reply', 'lab_qr_test'),
-        ctaUrl('🌐 URL Button', 'https://cobalt.tools'),
-        ctaCopy('📋 Copy Code', 'YUZUKI2025', 'promo_code'),
+      image: hero, header: MENU_TITLE, body: MENU_BODY, footer: FOOT, buttons: MENU_BUTTONS,
+    }, rawMessage);
+  },
+
+  // 3. Carousel — one card per category
+  async carousel(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_🎠 *carousel* — one swipeable card per category_' }).catch(() => {});
+    return sendCarousel(sock, jid, {
+      body: `${MENU_TITLE} — Pick a Category`,
+      cards: [
+        { header: '🧠 AI Features',  body: 'Chat, translate, summarise, debug code.\nSupports GPT · Gemini · LLaMA.',    footer: FOOT, buttons: [quickReply('▶ Try AI',     'cmd_ai')]     },
+        { header: '📥 Downloader',   body: 'YouTube, TikTok, Instagram, Twitter.\nHigh-quality, no watermark.',           footer: FOOT, buttons: [quickReply('📥 Download',  'cmd_dl')]     },
+        { header: '🔍 Search',       body: 'Web, Wikipedia, YouTube search.\nPowered by DuckDuckGo.',                     footer: FOOT, buttons: [quickReply('🔍 Search',    'cmd_search')] },
+        { header: '🎮 Fun & Games',  body: 'Trivia, memes, random facts.\nKeep the chat entertaining.',                   footer: FOOT, buttons: [quickReply('🎮 Fun',        'cmd_fun')]    },
+        { header: '📡 Info & Tools', body: 'Weather, news, currency rates.\nReal-time data on demand.',                   footer: FOOT, buttons: [quickReply('📡 Info',       'cmd_info')]   },
       ],
     }, rawMessage);
   },
 
-  async nativeflow(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    try {
-      await sock.sendMessage(
-        jid,
-        {
-          text:       `🔘 *nativeFlowMessage test*\n\nRaw nativeFlow payload — 3 button row sent via sock.sendMessage.\nThis tests the proto-level nativeFlow rendering on cv3inx.`,
-          nativeFlow: [
-            { text: '🟢 Quick 1', id: 'nf_1' },
-            { text: '🔵 Quick 2', id: 'nf_2' },
-            { text: '🔴 Quick 3', id: 'nf_3' },
-          ],
-          footer: BRAND_FOOTER,
-        },
-        rawMessage ? { quoted: rawMessage } : {}
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ nativeFlow error: ${e.message}`);
-    }
-  },
-
+  // 4. List message with sections
   async list(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_📋 *list* — sections + rows, deepest text capacity_' }).catch(() => {});
     return sendList(sock, jid, {
-      header:     '📋 List Message Test',
-      body:       'This is a *sendList()* test.\n\nSelect any option to see how list rows render.',
-      footer:     BRAND_FOOTER,
-      buttonText: '📋 Open List',
+      title: MENU_TITLE, text: `${MENU_BODY}\n\nTap *Browse Commands* to explore.`,
+      footer: FOOT, buttonText: 'Browse Commands',
       sections: [
         {
-          title: '🧠 AI Features',
+          title: '🤖 AI & Intelligence',
           rows: [
-            { header: '🤖', title: 'GPT Chat',       description: 'Send an AI message', id: 'lab_ai_1' },
-            { header: '🌐', title: 'Translation',     description: 'Translate text',     id: 'lab_ai_2' },
-            { header: '📝', title: 'Summarisation',   description: 'Summarise content',  id: 'lab_ai_3' },
+            { id: 'cmd_ai',       title: `${P}ai`,       description: 'Chat with AI — translate, summarise, debug' },
+            { id: 'cmd_ai_clear', title: `${P}ai clear`, description: 'Reset your conversation history'            },
           ],
         },
         {
           title: '📥 Downloaders',
           rows: [
-            { header: '▶', title: 'YouTube',   description: 'Download video',   id: 'lab_dl_1' },
-            { header: '🎵', title: 'TikTok',   description: 'Download clip',    id: 'lab_dl_2' },
-            { header: '📸', title: 'Instagram', description: 'Download reel',   id: 'lab_dl_3' },
+            { id: 'cmd_dl', title: `${P}dl`, description: 'YouTube · TikTok · Instagram · Twitter' },
+            { id: 'cmd_yt', title: `${P}yt`, description: 'YouTube video / audio downloader'        },
+            { id: 'cmd_tt', title: `${P}tt`, description: 'TikTok downloader (no watermark)'         },
+          ],
+        },
+        {
+          title: '🔍 Search',
+          rows: [
+            { id: 'cmd_search',      title: `${P}search`,      description: 'DuckDuckGo web search' },
+            { id: 'cmd_search_wiki', title: `${P}search wiki`, description: 'Wikipedia summary'      },
+            { id: 'cmd_search_yt',   title: `${P}search yt`,   description: 'YouTube video search'  },
+          ],
+        },
+        {
+          title: '⚙️ Utility',
+          rows: [
+            { id: 'open_menu', title: `${P}help`, description: 'Show the main menu'     },
+            { id: 'cmd_ping',  title: `${P}ping`, description: 'Check bot response time' },
           ],
         },
       ],
     }, rawMessage);
   },
 
-  async poll(ctx) {
+  // 5. Hydrated template buttons
+  async template(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
-    return sendPoll(
-      sock, jid,
-      '🔬 Lab Poll — Which message type do you use most?',
-      ['Interactive / NativeFlow', 'listMessage', 'carouselMessage', 'catalogMessage', 'nativeFlowMessage'],
-      { allowMultiple: false, quoted: rawMessage }
-    );
-  },
-
-  async carousel(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    return sendCarousel(sock, jid, {
-      cards: [
-        {
-          header:  '🧠 AI Features',
-          body:    'Chat with GPT, Gemini, or LLaMA.\nTranslate, summarise, debug code.',
-          footer:  BRAND_FOOTER,
-          buttons: [quickReply('▶ Try AI', 'cmd_ai')],
-        },
-        {
-          header:  '📥 Downloader',
-          body:    'YouTube, TikTok, Instagram, Twitter.\nHigh-quality, no watermark.',
-          footer:  BRAND_FOOTER,
-          buttons: [quickReply('📥 Download', 'cmd_dl')],
-        },
-        {
-          header:  '🔍 Search',
-          body:    'Web search, Wikipedia, YouTube search.\nPowered by DuckDuckGo.',
-          footer:  BRAND_FOOTER,
-          buttons: [quickReply('🔍 Search', 'cmd_search')],
-        },
+    await sock.sendMessage(jid, { text: '_📄 *template* — WA Business hydratedTemplate format_' }).catch(() => {});
+    return sendInteractiveAsTemplate(sock, jid, {
+      header: MENU_TITLE, body: MENU_BODY, footer: FOOT,
+      buttons: [
+        { quickReplyButton: { displayText: '🧠 AI Chat',  id: 'cmd_ai'     } },
+        { quickReplyButton: { displayText: '📥 Download', id: 'cmd_dl'     } },
+        { quickReplyButton: { displayText: '🔍 Search',   id: 'cmd_search' } },
       ],
     }, rawMessage);
   },
 
-  async collection(ctx) {
+  // 6. productMessage — dim description trick
+  async product(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
-    return sendCollection(sock, jid, {
-      title:       'Yuzuki AI Products',
-      description: 'Test collection card — cv3inx sendCollection()',
-      products: [
-        { id: 'prod_1', title: 'AI Premium', price: '9.99', currency: 'USD', description: 'Unlimited AI chats' },
-        { id: 'prod_2', title: 'Media Pack', price: '4.99', currency: 'USD', description: 'Bulk downloader access' },
-      ],
+    await sock.sendMessage(jid, {
+      text:
+        '_📦 *product* — productMessage\n' +
+        'The *description* field renders dim grey automatically — no markdown tricks needed.\n' +
+        "It's the product card renderer's own visual hierarchy._",
+    }).catch(() => {});
+    return sendProductMenu(sock, jid, {
+      title:           MENU_TITLE,
+      description:     MENU_DESC,
+      retailerId:      'yuzuki_menu',
+      currency:        '',
+      priceAmount1000: 0,
+      catalogTitle:    `${BOT} Command Menu`,
     }, rawMessage);
   },
 
-  // ── Business messages ─────────────────────────────────────────────────────
-
-  async catalog(ctx) {
-    const { sock, chat: jid, rawMessage, sender } = ctx;
-
-    try {
-      const bs = getBusinessService();
-      const result = await bs.getCatalog({ limit: 5 });
-      const products = result.products ?? [];
-
-      if (!products.length) {
-        return ctx.reply(
-          `📦 *Catalog empty or not a Business account.*\n\n` +
-          `catalogMessage requires a WhatsApp Business account with products listed in the catalog.\n\n` +
-          `Manage products: Meta Business Manager → WhatsApp → Commerce.`
-        );
-      }
-
-      const lines = products.map((p, i) =>
-        `*${i + 1}.* ${p.name ?? 'Product'} — ${p.currency ?? ''} ${p.price ?? '?'}`
-      );
-
-      return sendInteractive(sock, jid, {
-        header:  '🛒 Catalog Test',
-        body:    `Found *${products.length}* product(s):\n\n${lines.join('\n')}`,
-        footer:  BRAND_FOOTER,
-        buttons: [quickReply('🔄 Refresh Catalog', 'lab_catalog')],
-      }, rawMessage);
-    } catch (e) {
-      return ctx.reply(
-        `⚠️ *getCatalog failed:*\n${e.message}\n\n` +
-        `This method requires a WhatsApp Business account with sock.getCatalog() available.`
-      );
-    }
+  // 7. Plain markdown extended text
+  async text(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_✍️ *text* — plain extendedTextMessage, maximum markdown freedom_' }).catch(() => {});
+    const body =
+      `╔══════════════════╗\n` +
+      `║  🤖 ${BOT.slice(0, 14).padEnd(14)} ║\n` +
+      `╚══════════════════╝\n\n` +
+      MENU_BODY + '\n\n' +
+      `──────────────────────\n` +
+      FOOT;
+    return sock.sendMessage(jid, { text: body }, rawMessage ? { quoted: rawMessage } : {});
   },
 
-  async order(ctx) {
-    const { rawMessage: raw } = ctx;
-    const orderMsg = raw?.message?.orderMessage;
-
-    if (!orderMsg) {
-      return ctx.reply(
-        `📦 *orderMessage test*\n\n` +
-        `Reply to a *WhatsApp Shop order message* with \`.lab order\` to inspect its fields.\n\n` +
-        `Fields available:\n` +
-        `• orderId, token\n` +
-        `• itemCount, message\n` +
-        `• orderTitle, sellerJid\n` +
-        `• thumbnail, surface\n\n` +
-        `_No orderMessage found in the quoted message._`
-      );
-    }
-
-    const fields = Object.entries(orderMsg)
-      .filter(([, v]) => v !== null && v !== undefined && v !== '')
-      .map(([k, v]) => `• *${k}*: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
-      .join('\n');
-
-    return ctx.reply(`📦 *orderMessage fields:*\n\n${fields}`);
-  },
-
-  async payment(ctx) {
-    return ctx.reply(
-      `💳 *paymentMessage test*\n\n` +
-      `paymentMessage is sent by WhatsApp Pay when a payment is made.\n` +
-      `It arrives as an inbound event — not sendable directly via Baileys.\n\n` +
-      `*Fields to inspect on receipt:*\n` +
-      `• amount1000, currencyCodeIso4217\n` +
-      `• status (PAYMENT_ACTION_REQUEST / PAYMENT_ACTION_SENT / etc.)\n` +
-      `• transactionTimestamp, expiryTimestamp\n` +
-      `• requestFrom / sendTo JID\n` +
-      `• noteMessage (optional note text)\n\n` +
-      `_Listen for incoming paymentMessage in events/messages.js to handle live payments._`
-    );
-  },
-
-  // ── Contact messages ──────────────────────────────────────────────────────
-
+  // 8. Contact card as info card
   async contact(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
-    const ownerNum = config.ownerNumber ?? '1234567890';
-
+    await sock.sendMessage(jid, {
+      text: '_👤 *contact* — contactMessage / vCard\nFN (name) = bold · ORG field = dim grey below name._',
+    }).catch(() => {});
+    const num = config.ownerNumber ?? '1234567890';
     const vcard =
-      `BEGIN:VCARD\n` +
-      `VERSION:3.0\n` +
-      `FN:${config.botName ?? 'Yuzuki AI'}\n` +
-      `ORG:Lab Test;\n` +
-      `TEL;type=CELL;type=VOICE;waid=${ownerNum}:+${ownerNum}\n` +
-      `X-WA-BIZ-NAME:${config.botName ?? 'Yuzuki AI'}\n` +
-      `END:VCARD`;
-
-    try {
-      await sock.sendMessage(
-        jid,
-        {
-          contacts: {
-            displayName: config.botName ?? 'Yuzuki AI',
-            contacts: [{ vcard }],
-          },
-        },
-        rawMessage ? { quoted: rawMessage } : {}
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ contactMessage failed: ${e.message}`);
-    }
+      'BEGIN:VCARD\n' +
+      'VERSION:3.0\n' +
+      `FN:${BOT}\n` +
+      'ORG:AI · Download · Search · Fun · Info;\n' +
+      `NOTE:Type ${P}help to explore all commands.\n` +
+      `TEL;type=CELL;type=VOICE;waid=${num}:+${num}\n` +
+      `X-WA-BIZ-NAME:${BOT}\n` +
+      'END:VCARD';
+    return sock.sendMessage(
+      jid,
+      { contacts: { displayName: BOT, contacts: [{ vcard }] } },
+      rawMessage ? { quoted: rawMessage } : {},
+    );
   },
 
-  async contacts(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    const ownerNum = config.ownerNumber ?? '1234567890';
-
-    const makeVcard = (name, num, org) =>
-      `BEGIN:VCARD\nVERSION:3.0\nFN:${name}\nORG:${org};\nTEL;type=CELL;type=VOICE;waid=${num}:+${num}\nEND:VCARD`;
-
-    try {
-      await sock.sendMessage(
-        jid,
-        {
-          contacts: {
-            displayName: 'Lab Contacts',
-            contacts: [
-              { vcard: makeVcard('Contact One',  ownerNum, 'Lab Test') },
-              { vcard: makeVcard('Contact Two',  ownerNum, 'Lab Test') },
-              { vcard: makeVcard('Contact Three', ownerNum, 'Lab Test') },
-            ],
-          },
-        },
-        rawMessage ? { quoted: rawMessage } : {}
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ multi-contact failed: ${e.message}`);
-    }
-  },
-
-  // ── Media ─────────────────────────────────────────────────────────────────
-
+  // 9. Location pin as decorative header
   async location(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, {
+      text: '_📍 *location* — locationMessage\nname = bold above the map pin · address = dim grey below._',
+    }).catch(() => {});
+    return sock.sendMessage(
+      jid,
+      {
+        location: {
+          degreesLatitude:  1.3521,
+          degreesLongitude: 103.8198,
+          name:    MENU_TITLE,
+          address: MENU_DESC,
+        },
+      },
+      rawMessage ? { quoted: rawMessage } : {},
+    );
+  },
+
+  // 10. orderMessage — title bold, message dim
+  async order(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, {
+      text:
+        '_🛒 *order* — orderMessage\n' +
+        'orderTitle = bold · message / itemCount = dim secondary text.\n' +
+        'May require a WA Business account to render correctly._',
+    }).catch(() => {});
+    const { proto, generateWAMessageFromContent } = getBaileys();
+    const ownerJid = sock.user?.id ?? `${config.ownerNumber ?? '0'}@s.whatsapp.net`;
     try {
-      await sock.sendMessage(
+      const msg = generateWAMessageFromContent(
         jid,
         {
-          location: {
-            degreesLatitude:  1.3521,   // Singapore
-            degreesLongitude: 103.8198,
-            name:  'Yuzuki Lab Pin',
-            address: 'Replit Cloud ☁',
-          },
+          orderMessage: proto.Message.OrderMessage.create({
+            orderId:    'lab_menu_001',
+            token:      'menu',
+            itemCount:  5,
+            status:     1,
+            surface:    1,
+            message:    `${P}help — see all 5 categories`,
+            orderTitle: MENU_TITLE,
+            sellerJid:  ownerJid,
+          }),
         },
-        rawMessage ? { quoted: rawMessage } : {}
+        { userJid: sock.user?.id, quoted: rawMessage },
       );
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
     } catch (e) {
-      return ctx.reply(`⚠️ location failed: ${e.message}`);
+      log.warn(`[lab] order failed (${e.message})`);
+      await ctx.reply(`⚠️ *orderMessage* failed:\n${e.message}\n\n_Requires a WA Business account._`);
     }
   },
 
-  async image(ctx) {
+  // 11. shopStorefrontMessage commerce card
+  async storefront(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
-    const heroImage = getRandomHeroImage('ai');
-    const content   = heroImage
-      ? { image: heroImage, caption: `🖼️ *imageMessage test*\nFrom assets/hero/ai/ — cv3inx image send.\n_Rendered via sock.sendMessage({ image, caption })_` }
-      : { image: { url: 'https://picsum.photos/720/480.jpg' }, caption: `🖼️ *imageMessage test* (remote URL)` };
-
-    try {
-      await sock.sendMessage(jid, content, rawMessage ? { quoted: rawMessage } : {});
-    } catch (e) {
-      return ctx.reply(`⚠️ imageMessage failed: ${e.message}`);
-    }
+    await sock.sendMessage(jid, {
+      text: '_🏪 *storefront* — shopStorefrontMessage\nCommerce card — requires a WA Business account with an active catalog._',
+    }).catch(() => {});
+    const ownerJid = sock.user?.id ?? `${config.ownerNumber ?? '0'}@s.whatsapp.net`;
+    return sendCollection(sock, jid, { bizJid: ownerJid, id: '0', title: MENU_TITLE }, rawMessage);
   },
 
-  async disappearing(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    const content = {
-      image:   { url: 'https://picsum.photos/480/480.jpg' },
-      viewOnce: true,
-      caption: '👁️ view-once test',
-    };
-    try {
-      await sock.sendMessage(jid, content, rawMessage ? { quoted: rawMessage } : {});
-    } catch (e) {
-      return ctx.reply(`⚠️ viewOnce failed: ${e.message}`);
-    }
-  },
+  // Run all in sequence
+  async all(ctx) {
+    const { sock, chat: jid } = ctx;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    const order = ['interactive','image','carousel','list','template','product','text','contact','location','order','storefront'];
 
-  async sticker(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    try {
-      await sock.sendMessage(
-        jid,
-        { sticker: { url: 'https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif' } },
-        rawMessage ? { quoted: rawMessage } : {}
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ sticker failed: ${e.message}\n\n_Note: sticker requires a valid WebP or gif buffer._`);
-    }
-  },
+    await sock.sendMessage(jid, {
+      text:
+        `🚀 *Running all ${order.length} menu types in sequence.*\n` +
+        `Compare them side-by-side to see how each one renders.\n\n` +
+        order.map((k, i) => `${i + 1}. ${TESTS[k]?.icon ?? '•'} ${k}`).join('\n'),
+    }).catch(() => {});
 
-  async reaction(ctx) {
-    const { sock, chat: jid, rawMessage } = ctx;
-    if (!rawMessage) return ctx.reply('⚠️ Reply to a message to react to it.');
-    try {
-      await sendReaction(sock, jid, rawMessage, '🔬');
-    } catch (e) {
-      return ctx.reply(`⚠️ reaction failed: ${e.message}`);
-    }
-  },
-
-  async mention(ctx) {
-    const { sock, chat: jid, sender, rawMessage } = ctx;
-    try {
-      await sock.sendMessage(
-        jid,
-        { text: `🔬 mention test — @${sender.split('@')[0]}`, mentions: [sender] },
-        rawMessage ? { quoted: rawMessage } : {}
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ mention failed: ${e.message}`);
-    }
-  },
-
-  // ── Newsletter ────────────────────────────────────────────────────────────
-
-  async newsletter(ctx) {
-    const channelJid = config.officialChannelJid;
-    if (!channelJid) {
-      return ctx.reply(
-        `📢 *Newsletter / Channel test*\n\n` +
-        `OFFICIAL_CHANNEL_JID is not configured.\n\n` +
-        `Set it in .env:\n` +
-        `\`OFFICIAL_CHANNEL_JID=120363XXXXXXXXXX@newsletter\`\n\n` +
-        `Available newsletter operations (via NewsletterService):\n` +
-        `• create(name, desc)\n` +
-        `• updateName / updateDescription / updatePicture\n` +
-        `• follow / unfollow / mute / unmute\n` +
-        `• fetchMessages / reactMessage\n` +
-        `• metadata / subscribers\n\n` +
-        `_Read src/services/newsletter.js for full API._`
-      );
+    for (const key of order) {
+      await delay(700);
+      try {
+        await ctx.react('🔬');
+        await runners[key](ctx);
+      } catch (e) {
+        log.warn(`[lab:all] ${key} failed: ${e.message}`);
+        await sock.sendMessage(jid, { text: `⚠️ *${key}* — ${e.message}` }).catch(() => {});
+      }
     }
 
-    try {
-      const ns   = getNewsletterService();
-      const meta = await ns.metadata(channelJid);
-      return ctx.reply(
-        `📢 *Newsletter metadata:*\n\n` +
-        `Name: ${meta.name ?? '?'}\n` +
-        `Subscribers: ${meta.subscribers ?? '?'}\n` +
-        `JID: ${channelJid}\n\n` +
-        `_Channel is live and reachable._`
-      );
-    } catch (e) {
-      return ctx.reply(`⚠️ Newsletter error: ${e.message}`);
-    }
+    await delay(800);
+    await sock.sendMessage(jid, {
+      text: `✅ *Done — ${order.length} menu types sent.*\n\nScroll up and compare how each one renders on your device.`,
+    }).catch(() => {});
   },
 };
 
-// ── List all tests ─────────────────────────────────────────────────────────────
+// ── Plain text list ────────────────────────────────────────────────────────────
 
 function sendTestList(ctx) {
-  const p = config.prefix;
   const lines = Object.entries(TESTS)
-    .map(([key, t]) => `${t.icon} \`${p}lab ${key}\` — ${t.label}\n   _${t.desc}_`)
+    .map(([k, t]) => `${t.icon} \`${P}lab ${k}\` — *${t.label}*\n   _${t.desc}_`)
     .join('\n\n');
-
   return ctx.reply(
-    `🔬 *Lab — All Tests (${Object.keys(TESTS).length})*\n\n${lines}\n\n` +
-    `Use \`${p}lab\` to open the interactive menu.`
+    `🔬 *Lab — Menu Style Types (${Object.keys(TESTS).length})*\n\n${lines}\n\n` +
+    `\`${P}lab all\`  — run every type in sequence\n` +
+    `\`${P}lab\`      — interactive selector`,
   );
 }
 
-// ── Main handler ───────────────────────────────────────────────────────────────
+// ── Exports ────────────────────────────────────────────────────────────────────
+
+export const meta = {
+  name:        'lab',
+  description: 'Menu style lab — compare every WA message type as a menu container',
+  category:    'owner',
+  aliases:     ['labtest'],
+  cooldown:    3,
+  permission:  'owner',
+};
 
 export async function handler(ctx) {
   const { args } = ctx;
-  const sub = args[0]?.toLowerCase().replace(/-/g, '');
+  const sub = (args[0] ?? '').toLowerCase().replace(/-/g, '');
 
   if (!sub || sub === 'menu') return sendLabMenu(ctx);
-  if (sub === 'list' || sub === 'all') return sendTestList(ctx);
+  if (sub === 'list')         return sendTestList(ctx);
 
   const runner = runners[sub];
   if (!runner) {
     return ctx.reply(
-      `❌ Unknown lab test: *${sub}*\n\n` +
-      `Use \`.lab list\` to see all available tests.`
+      `❌ Unknown type: *${sub}*\n\n` +
+      `Available: ${Object.keys(runners).map(k => `\`${P}lab ${k}\``).join(' · ')}\n\n` +
+      `Use \`${P}lab list\` or \`${P}lab\` to browse.`,
     );
   }
 
