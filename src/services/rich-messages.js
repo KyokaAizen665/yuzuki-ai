@@ -164,6 +164,7 @@
     const {
       body, footer, buttons: btns = [], header,
       useWebview, messageParamsJson,
+      contextImage,
     } = opts;
 
     // Proto path — same approach as sendCarousel.
@@ -180,6 +181,20 @@
         jid,
         {
           interactiveMessage: proto.Message.InteractiveMessage.create({
+            ...(contextImage ? {
+              contextInfo: proto.ContextInfo.create({
+                externalAdReply: proto.ContextInfo.ExternalAdReplyInfo.create({
+                  title:                 header ?? '',
+                  body:                  '',
+                  ...(contextImage.url
+                    ? { thumbnailUrl:    contextImage.url }
+                    : { thumbnail:       contextImage.data }),
+                  mediaType:             1,
+                  renderLargerThumbnail: true,
+                  sourceUrl:             '',
+                }),
+              }),
+            } : {}),
             header: proto.Message.InteractiveMessage.Header.create({
               hasMediaAttachment: false,
               ...(header ? { title: header } : {}),
