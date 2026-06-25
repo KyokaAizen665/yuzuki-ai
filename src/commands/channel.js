@@ -19,7 +19,6 @@
  */
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   quickReply,
 } from '../services/rich-messages.js';
 import { renderTable }          from '../services/table-renderer.js';
@@ -67,9 +66,9 @@ export async function handler(ctx) {
     const buttons = [quickReply('📋 Commands', 'open_menu')];
     if (OFFICIAL_CHANNEL_JID) buttons.unshift(quickReply('📢 Follow Yuzuki', 'follow_official'));
 
-    await sendInteractiveWithImage(sock, jid, {
-      header:  '🌸 Yuzuki AI',
-      image:   getRandomHeroImage('channel'),
+    await sendInteractive(sock, jid, {
+      header:       '🌸 Yuzuki AI',
+      contextImage: getRandomHeroImage('channel'),
       body:
         `*The official Yuzuki AI channel.*\n\n` +
         `Stay updated with:\n` +
