@@ -26,7 +26,6 @@
 import { log } from '../utils/logger.js';
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   quickReply,
   ctaUrl,
 } from '../services/rich-messages.js';
@@ -179,9 +178,9 @@ async function sendHelpCard(ctx) {
     `• \`${p}dl <url>\`   — Paste any supported URL\n\n` +
     `_Powered by Cobalt.tools — no login required_`;
 
-  return sendInteractiveWithImage(sock, jid, {
-    header:  '📥 Downloader',
-    image:   getRandomHeroImage('downloader'),
+  return sendInteractive(sock, jid, {
+    header:       '📥 Downloader',
+    contextImage: getRandomHeroImage('downloader'),
     body,
     footer:  `🌸 ${config.botName}`,
     buttons: [
