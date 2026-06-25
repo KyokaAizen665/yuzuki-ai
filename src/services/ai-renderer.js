@@ -54,7 +54,6 @@ import {
   parseAIText,
   sendNativeAIResponse,
   sendInteractive,
-  sendInteractiveWithImage,
   quickReply,
 }                           from './rich-messages.js';
 import { config }           from '../config/index.js';
@@ -150,9 +149,9 @@ async function _tryInteractive(sock, jid, parsed, opts, quoted, withHero) {
   const header = `🤖 ${botLabel()}`;
 
   if (withHero) {
-    await sendInteractiveWithImage(sock, jid, {
+    await sendInteractive(sock, jid, {
       header,
-      image:   getRandomHeroImage('ai'),
+      contextImage: getRandomHeroImage('ai'),
       body,
       footer,
       buttons: btns,
