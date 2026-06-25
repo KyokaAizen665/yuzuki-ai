@@ -29,3 +29,15 @@ export function createSocket({ version, authState }) {
     keepAliveIntervalMs:           30_000,
   });
 }
+
+// ── getBaileys ───────────────────────────────────────────────────────────────
+// Lazy singleton — returns the full Baileys module via createRequire so that
+// commands (e.g. lab-commerce.js) can access proto helpers without a bare
+// 'baileys' specifier in ESM context.
+import { createRequire as _cjsRequire } from 'module';
+const _req = _cjsRequire(import.meta.url);
+let _baileysMod = null;
+export function getBaileys() {
+  if (!_baileysMod) _baileysMod = _req('baileys');
+  return _baileysMod;
+}
