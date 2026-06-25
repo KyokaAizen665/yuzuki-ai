@@ -11,7 +11,6 @@
  */
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   ctaCall,
   ctaUrl,
   quickReply,
@@ -51,9 +50,9 @@ export async function handler(ctx) {
     `Tap *Call Owner* below to start a native WhatsApp call, or message the owner directly.\n\n` +
     (ownerNum ? `Owner number: *+${ownerNum}*` : `_Contact details not configured._`);
 
-  await sendInteractiveWithImage(sock, jid, {
-    header:  '👑 Contact Owner',
-    image:   getRandomHeroImage('owner'),
+  await sendInteractive(sock, jid, {
+    header:       '👑 Contact Owner',
+    contextImage: getRandomHeroImage('owner'),
     body,
     footer:  BRAND_FOOTER,
     buttons,
