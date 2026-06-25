@@ -58,6 +58,17 @@ import { config }               from '../config/index.js';
 import { getRandomHeroImage }   from '../services/hero-images.js';
 import { sendInteractive, quickReply } from '../services/rich-messages.js';
 import { getBaileys }           from '../core/socket.js';
+// ── Startup validation ────────────────────────────────────────────────────────
+// Verify getBaileys() exposes the proto helpers this module depends on.
+// Logs a clear warning instead of a cryptic runtime crash if Baileys changes.
+try {
+  const _b = getBaileys();
+  if (!_b?.proto?.Message || typeof _b?.generateWAMessageFromContent !== 'function') {
+    console.warn('[lab-commerce] ⚠ getBaileys() is missing proto.Message or generateWAMessageFromContent — carousel commands will fail at runtime');
+  }
+} catch (_e) {
+  console.warn(`[lab-commerce] ⚠ getBaileys() validation threw: ${_e.message}`);
+}
 
 export const meta = {
   name:        'testcommerce',
