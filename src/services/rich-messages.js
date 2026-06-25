@@ -166,33 +166,55 @@
       useWebview, messageParamsJson,
     } = opts;
 
-    // raw: true → cv3inx's generateWAMessageContent returns the object directly,
-    // bypassing the else-catch-all that calls prepareWAMessageMedia() and throws
-    // "Invalid media type" for proto-level keys it does not recognise.
-    const content = {
-      raw: true,
-      interactiveMessage: {
-        header: {
-          hasMediaAttachment: false,
-          ...(header ? { title: header } : {}),
-        },
-        body:   { text: body },
-        footer: footer ? { text: footer } : undefined,
-        nativeFlowMessage: {
-          buttons:            btns,
-          messageParamsJson:  messageParamsJson ?? '',
-          ...(useWebview !== undefined ? { useWebview } : {}),
-        },
-      },
-    };
-
-    log.debug({ jid, header, btns: btns.length }, '[rich-messages] sendInteractive payload');
-
+    // Proto path — same approach as sendCarousel.
+    // raw:true with a plain JS interactiveMessage bypasses cv3inx's proto coercion
+    // for NativeFlowButton objects, so buttonParamsJson is silently dropped during
+    // serialization. The tapped-button response then has an empty / id-less
+    // paramsJson and button.js cannot route it. Using generateWAMessageFromContent
+    // + relayMessage ensures NativeFlowButton.buttonParamsJson is properly encoded,
+    // so the WhatsApp response echoes back paramsJson with the full {id, display_text}.
     try {
-      await sock.sendMessage(jid, content, quoted ? { quoted } : {});
+      const { proto, generateWAMessageFromContent } = getBaileys();
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        {
+          interactiveMessage: proto.Message.InteractiveMessage.create({
+            header: proto.Message.InteractiveMessage.Header.create({
+              hasMediaAttachment: false,
+              ...(header ? { title: header } : {}),
+            }),
+            body: proto.Message.InteractiveMessage.Body.create({ text: body ?? '' }),
+            ...(footer
+              ? { footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }) }
+              : {}),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+              buttons: btns.map(b => ({
+                name:             b.name ?? 'quick_reply',
+                buttonParamsJson: b.buttonParamsJson
+                  ?? JSON.stringify({ display_text: b.text ?? '', id: b.id ?? '' }),
+              })),
+              messageParamsJson: messageParamsJson ?? '',
+              ...(useWebview !== undefined ? { useWebview } : {}),
+            }),
+          }),
+        },
+        { userJid: sock.user?.id, quoted },
+      );
+
+      log.debug({ jid, header, btns: btns.length }, '[rich-messages] sendInteractive proto payload');
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
     } catch (e) {
-      log.error(`[rich-messages] sendInteractive failed: ${e.message}`);
-      throw e;
+      log.error(`[rich-messages] sendInteractive proto path failed (${e.message}) — text fallback`);
+      // Plain-text fallback — interactive card never goes silent
+      const btnLabels = btns.map(b => {
+        try {
+          const p = b.buttonParamsJson ? JSON.parse(b.buttonParamsJson) : null;
+          return `• ${p?.display_text ?? b.text ?? b.name ?? ''}`;
+        } catch { return `• ${b.name ?? ''}`; }
+      }).filter(Boolean).join('\n');
+      const parts = [header, body, btnLabels, footer].filter(Boolean);
+      await sock.sendMessage(jid, { text: parts.join('\n\n') }, quoted ? { quoted } : {});
     }
   }
 
