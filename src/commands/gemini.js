@@ -23,7 +23,6 @@ import {
 import { aiRateLimiter }     from '../services/rate-limiter.js';
 import { config }            from '../config/index.js';
 import {
-  sendInteractiveWithImage,
   sendReaction,
   quickReply,
 }                            from '../services/rich-messages.js';
@@ -48,9 +47,9 @@ export async function handler(ctx) {
 
   // ── Key not configured ────────────────────────────────────────────────────
   if (!process.env.GEMINI_API_KEY) {
-    return sendInteractiveWithImage(sock, chatJid, {
-      header:  '⚡ Google Gemini',
-      image:   getRandomHeroImage('ai'),
+    return sendInteractive(sock, chatJid, {
+      header:       '⚡ Google Gemini',
+      contextImage: getRandomHeroImage('ai'),
       body:
         `Gemini is not configured.\n\n` +
         `To enable it:\n` +
@@ -76,18 +75,23 @@ export async function handler(ctx) {
       await sock.sendMessage(
         chatJid,
         {
-          image:      getRandomHeroImage('ai'),
-          caption:
+          contextInfo: {
+            externalAdReply: {
+              title:                 '⚡ Google Gemini',
+              body:                  '',
+              ...((() => { const i = getRandomHeroImage('ai'); return i.url ? { thumbnailUrl: i.url } : { thumbnail: i.data }; })()),
+              mediaType:             1,
+              renderLargerThumbnail: true,
+              sourceUrl:             '',
+            },
+          },
+          text:
             `Google Gemini is connected.\n\n` +
             `Send any message and Gemini will respond directly.\n\n` +
             `_Examples:_\n` +
             `• Explain neural networks\n` +
             `• Write a Rust function\n` +
             `• Translate to Japanese`,
-          nativeFlow: [
-            { text: '📊 AI Status', id: 'ai_status' },
-            { text: '← Menu',      id: 'back_menu' },
-          ],
           footer:    BRAND_FOOTER(),
           offerText: '⚡ Gemini 2.0 Flash connected',
         },
@@ -124,9 +128,9 @@ export async function handler(ctx) {
   } catch (err) {
     try { await sock.sendPresenceUpdate('paused', chatJid); } catch {}
     try { await sendReaction(sock, chatJid, ctx.key, '❌'); } catch {}
-    return sendInteractiveWithImage(sock, chatJid, {
-      header:  '⚠️ Gemini Unavailable',
-      image:   getRandomHeroImage('ai'),
+    return sendInteractive(sock, chatJid, {
+      header:       '⚠️ Gemini Unavailable',
+      contextImage: getRandomHeroImage('ai'),
       body:    `Gemini could not respond at this time.\n\n_${err.message}_\n\nUse the main AI command which falls back automatically.`,
       footer:  BRAND_FOOTER(),
       buttons: [
