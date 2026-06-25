@@ -44,7 +44,7 @@ import { config }           from '../config/index.js';
 import { setSetting }       from '../database/store.js';
 import { getPersonalities, buildTaskPrompt } from '../services/ai/PromptManager.js';
 import {
-  sendInteractiveWithImage,
+  sendInteractive,
   sendReaction,
   quickReply,
 }                           from '../services/rich-messages.js';
@@ -269,9 +269,9 @@ export async function handler(ctx) {
   if (!prompt) {
     const active = AIManager.getActiveProvider();
     const p = config.prefix;
-    return sendInteractiveWithImage(ctx.sock, chatJid, {
-      header:  `🤖 ${config.botName} AI`,
-      image:   getRandomHeroImage('ai'),
+    return sendInteractive(ctx.sock, chatJid, {
+      header:       `🤖 ${config.botName} AI`,
+      contextImage: getRandomHeroImage('ai'),
       body:
         `Provider: *${active ?? 'none configured'}*\n\n` +
         `Just send me a message and I'll reply! Try:\n` +
