@@ -728,6 +728,75 @@
     }
   }
 
+
+  // ── Product Menu (dim description aesthetic) ─────────────────────────────────
+
+  /**
+   * sendProductMenu(sock, jid, opts, quoted?) → Promise<void>
+   *
+   * Uses productMessage so WhatsApp applies its own dim-grey styling to the
+   * description field. This is the trick used by bots that show a "faded"
+   * menu body — no special formatting needed, the product card renderer does it.
+   *
+   * NOTE: WA may show an error thumbnail when productId is not in a live
+   * Business catalog. The text content still renders correctly.
+   *
+   * @param {{
+   *   title:            string  — bold product title (menu heading)
+   *   description:      string  — dim grey body text (menu content) ← the trick
+   *   retailerId?:      string  — product ID stub    (default: 'menu_001')
+   *   currency?:        string  — ISO code (omit for no price display)
+   *   priceAmount1000?: number  — price × 1000 (0 = no price shown)
+   *   url?:             string  — optional product URL
+   *   catalogTitle?:    string  — catalog label at bottom of card
+   * }} opts
+   */
+  export async function sendProductMenu(sock, jid, opts, quoted) {
+    const {
+      title,
+      description,
+      retailerId      = 'menu_001',
+      currency        = '',
+      priceAmount1000 = 0,
+      url             = '',
+      catalogTitle    = title,
+    } = opts;
+
+    try {
+      const { proto, generateWAMessageFromContent } = getBaileys();
+      const ownerJid = sock.user?.id ?? '';
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        {
+          productMessage: proto.Message.ProductMessage.create({
+            product: proto.Message.ProductMessage.ProductSnapshot.create({
+              productId:       retailerId,
+              title,
+              description,
+              currencyCode:    currency,
+              priceAmount1000,
+              retailerId,
+              url,
+            }),
+            businessOwnerJid: ownerJid,
+            catalog: proto.Message.ProductMessage.CatalogSnapshot.create({
+              catalogId: retailerId,
+              title:     catalogTitle,
+            }),
+          }),
+        },
+        { userJid: ownerJid, quoted },
+      );
+
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+    } catch (e) {
+      log.error(`[rich-messages] sendProductMenu failed (${e.message}) — text fallback`);
+      const fallback = `*${title}*\n\n${description}`;
+      await sock.sendMessage(jid, { text: fallback }, quoted ? { quoted } : {});
+    }
+  }
+
   // ── Interactive As Template ───────────────────────────────────────────────────
 
   /**
@@ -922,6 +991,7 @@
     sendInteractiveWithImage,
     sendCarousel,
     sendCollection,
+    sendProductMenu,
     sendList,
     sendInteractiveAsTemplate,
     // Polls / Reactions
