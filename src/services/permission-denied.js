@@ -20,7 +20,7 @@
  * @param {string} [opts.reason]       — optional human-readable override reason
  */
 
-import { sendInteractiveWithImage, quickReply } from './rich-messages.js';
+import { sendInteractive, quickReply } from './rich-messages.js';
 import { getRandomHeroImage }                   from './hero-images.js';
 import { config }                               from '../config/index.js';
 import { log }                                  from '../utils/logger.js';
@@ -114,10 +114,8 @@ export async function renderPermissionDenied(sock, jid, rawMessage, opts) {
   } = opts ?? {};
 
   const body    = buildBody({ commandName, requiredLevel, userLevel, reason });
-  const image   = getRandomHeroImage('owner');
-
   const cardOpts = {
-    image,
+    contextImage: getRandomHeroImage('owner'),
     header:  '🚫 Access Denied',
     body,
     footer:  BRAND_FOOTER,
@@ -129,7 +127,7 @@ export async function renderPermissionDenied(sock, jid, rawMessage, opts) {
   };
 
   try {
-    await sendInteractiveWithImage(
+    await sendInteractive(
       sock,
       jid,
       cardOpts,
