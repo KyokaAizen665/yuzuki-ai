@@ -40,6 +40,11 @@ import {
   sendInteractiveAsTemplate,
   sendCollection,
   sendProductMenu,
+  sendCode,
+  sendTable,
+  sendCitation,
+  sendAIRichResponse,
+  sendNativeAIResponse,
   quickReply,
 } from '../services/rich-messages.js';
 
@@ -127,6 +132,32 @@ const TESTS = {
     icon:  '🏪',
     label: 'Shop Storefront',
     desc:  'shopStorefrontMessage commerce card — requires a WA Business account',
+  },
+  // ── Rendering tricks ────────────────────────────────────────────────────────
+  code: {
+    icon:  '💻',
+    label: 'sendCode — markdown code block',
+    desc:  'Triple-backtick code block — WA applies its own syntax colour to keywords',
+  },
+  nativecode: {
+    icon:  '🔮',
+    label: 'sendNativeAIResponse — cv3inx rich CODE',
+    desc:  'cv3inx RichSubMessageType.CODE → tokenized → GenAICodeUXPrimitive native renderer',
+  },
+  table: {
+    icon:  '📊',
+    label: 'sendTable — cv3inx native TABLE',
+    desc:  'cv3inx RichSubMessageType.TABLE → GenATableUXPrimitive — no ASCII drawing',
+  },
+  citation: {
+    icon:  '📎',
+    label: 'sendCitation — source attribution',
+    desc:  'Source bold + block-quoted content + optional comment',
+  },
+  richresponse: {
+    icon:  '🤖',
+    label: 'sendAIRichResponse — full AI card',
+    desc:  'Text + code block + table sent as a combined AI rich response in one call',
   },
 };
 
@@ -367,11 +398,130 @@ const runners = {
     return sendCollection(sock, jid, { bizJid: ownerJid, id: '0', title: MENU_TITLE }, rawMessage);
   },
 
+  // ── Rendering tricks ────────────────────────────────────────────────────────
+
+  // 12. sendCode — markdown triple-backtick code block
+  async code(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_💻 *code* — sendCode() — WA markdown triple-backtick block_' }).catch(() => {});
+    const sample = [
+      'function greet(name) {',
+      '  const msg = `Hello, ${name}!`;',
+      '  console.log(msg);',
+      '  return msg;',
+      '}',
+      '',
+      'greet("Yuzuki");',
+    ].join('\n');
+    return sendCode(sock, jid, sample, 'javascript', rawMessage);
+  },
+
+  // 13. sendNativeAIResponse — cv3inx rich CODE renderer
+  async nativecode(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, {
+      text:
+        '_🔮 *nativecode* — sendNativeAIResponse()\n' +
+        'Uses cv3inx RichSubMessageType.CODE → tokenizeCode() → GenAICodeUXPrimitive.\n' +
+        'Keywords, strings, numbers get individual colour tokens — no markdown involved._',
+    }).catch(() => {});
+    const sample = [
+      'async function fetchWeather(city) {',
+      '  const url = `https://api.weather.com/v1/${city}`;',
+      '  const res  = await fetch(url);',
+      '  if (!res.ok) throw new Error(`HTTP ${res.status}`);',
+      '  const data = await res.json();',
+      '  return { temp: data.temp, unit: "°C" };',
+      '}',
+    ].join('\n');
+    return sendNativeAIResponse(sock, jid, {
+      text:       'Native code renderer — each token is individually coloured:',
+      codeBlocks: [{ code: sample, language: 'javascript' }],
+    }, rawMessage);
+  },
+
+  // 14. sendTable — cv3inx native TABLE (GenATableUXPrimitive)
+  async table(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, {
+      text:
+        '_📊 *table* — sendTable()\n' +
+        'cv3inx RichSubMessageType.TABLE = 4 → toUnified() → GenATableUXPrimitive.\n' +
+        'Native WA table card — no ASCII box-drawing characters._',
+    }).catch(() => {});
+    return sendTable(
+      sock, jid,
+      ['Command', 'Category', 'Description'],
+      [
+        ['.ai',     'AI',       'Chat with AI — translate, summarise, debug'],
+        ['.dl',     'Download', 'YouTube · TikTok · Instagram · Twitter'],
+        ['.search', 'Search',   'DuckDuckGo · Wikipedia · YouTube'],
+        ['.fun',    'Fun',      'Trivia · memes · random facts'],
+        ['.help',   'Utility',  'Show main menu'],
+      ],
+      'Yuzuki AI — Command Reference',
+      rawMessage,
+    );
+  },
+
+  // 15. sendCitation
+  async citation(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, { text: '_📎 *citation* — sendCitation() — source attribution card_' }).catch(() => {});
+    return sendCitation(sock, jid, {
+      source:  'Yuzuki AI Documentation',
+      content: 'Yuzuki AI supports 11 WhatsApp message types as menu containers.\n' +
+               'Each type has different capabilities for headers, body text, and buttons.\n' +
+               'Use .lab to compare them side-by-side on any device.',
+      comment: '_💡 Run .lab all to see every type back-to-back_',
+    }, rawMessage);
+  },
+
+  // 16. sendAIRichResponse — full combined AI card
+  async richresponse(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+    await sock.sendMessage(jid, {
+      text:
+        '_🤖 *richresponse* — sendAIRichResponse()\n' +
+        'Sends text + a code block + a table all in one structured AI response.\n' +
+        'This is what the bot uses when replying to .ai queries._',
+    }).catch(() => {});
+    return sendAIRichResponse(sock, jid, {
+      text:
+        '✅ Here is a combined AI rich response.\n\n' +
+        'It contains *three parts*: a text block, a code snippet, and a data table — ' +
+        'all sent as a single structured message.',
+      codeBlocks: [{
+        language: 'python',
+        code: [
+          'def fibonacci(n):',
+          '    a, b = 0, 1',
+          '    for _ in range(n):',
+          '        yield a',
+          '        a, b = b, a + b',
+          '',
+          'print(list(fibonacci(8)))',
+          '# → [0, 1, 1, 2, 3, 5, 8, 13]',
+        ].join('\n'),
+      }],
+      tables: [{
+        title:   'Fibonacci — first 8 terms',
+        headers: ['n', '0', '1', '2', '3', '4', '5', '6', '7'],
+        rows: [
+          ['F(n)', '0', '1', '1', '2', '3', '5', '8', '13'],
+        ],
+      }],
+      suggestedPrompts: ['Explain Fibonacci', 'Show n=20', 'Graph it'],
+      model:    'lab-demo',
+      provider: 'Yuzuki',
+    }, rawMessage);
+  },
+
   // Run all in sequence
   async all(ctx) {
     const { sock, chat: jid } = ctx;
     const delay = ms => new Promise(r => setTimeout(r, ms));
-    const order = ['interactive','image','carousel','list','template','product','text','contact','location','order','storefront'];
+    const order = ['interactive','image','carousel','list','template','product','text','contact','location','order','storefront','code','nativecode','table','citation','richresponse'];
 
     await sock.sendMessage(jid, {
       text:
@@ -393,7 +543,7 @@ const runners = {
 
     await delay(800);
     await sock.sendMessage(jid, {
-      text: `✅ *Done — ${order.length} menu types sent.*\n\nScroll up and compare how each one renders on your device.`,
+      text: `✅ *Done — ${order.length} types sent.*\n\nScroll up and compare how each one renders on your device.`,
     }).catch(() => {});
   },
 };
