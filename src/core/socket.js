@@ -1,5 +1,5 @@
-import { createRequire } from 'module';
-const _req = createRequire(import.meta.url);
+import { createRequire as _cjsRequire } from 'module';
+const _req = _cjsRequire(import.meta.url);
 const { default: makeWASocket, Browsers, fetchLatestBaileysVersion } = _req('baileys');
 import { pinoLogger } from '../utils/logger.js';
 import { isJidBroadcast, isJidStatusBroadcast } from '../utils/jid.js';
@@ -34,8 +34,6 @@ export function createSocket({ version, authState }) {
 // Lazy singleton — returns the full Baileys module via createRequire so that
 // commands (e.g. lab-commerce.js) can access proto helpers without a bare
 // 'baileys' specifier in ESM context.
-import { createRequire as _cjsRequire } from 'module';
-const _req = _cjsRequire(import.meta.url);
 let _baileysMod = null;
 export function getBaileys() {
   if (!_baileysMod) _baileysMod = _req('baileys');
