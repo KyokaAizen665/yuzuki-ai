@@ -56,10 +56,10 @@ export const config = Object.freeze({
   officialChannelUrl:   process.env.OFFICIAL_CHANNEL_URL ?? '',
 
   // ── Menu offer overlay ───────────────────────────────────────────────────
-  menuOfferText:        process.env.MENU_OFFER_TEXT   ?? '',
-  menuOfferUrl:         process.env.MENU_OFFER_URL    ?? '',
-  menuOfferCode:        process.env.MENU_OFFER_CODE   ?? '',
-  menuOfferExpiry:      process.env.MENU_OFFER_EXPIRY ?? '',
+  menuOfferText:        '✨ Yuzuki AI — Your Smart WhatsApp Assistant',
+  menuOfferUrl:         '',
+  menuOfferCode:        '',
+  menuOfferExpiry:      '1830297599',
 
   // ── Paths ────────────────────────────────────────────────────────────────
   sessionDir:           process.env.SESSION_DIR ?? './session',
