@@ -34,7 +34,6 @@ import { getRandomHeroImage } from '../services/hero-images.js';
 import { getBaileys }         from '../core/socket.js';
 import {
   sendInteractive,
-  sendInteractiveWithImage,
   sendCarousel,
   sendList,
   sendInteractiveAsTemplate,
@@ -200,8 +199,8 @@ const runners = {
     const { sock, chat: jid, rawMessage } = ctx;
     const hero = getRandomHeroImage('ai') ?? { url: 'https://picsum.photos/720/400.jpg' };
     await sock.sendMessage(jid, { text: '_🖼️ *image* — hero image header + NativeFlow buttons_' }).catch(() => {});
-    return sendInteractiveWithImage(sock, jid, {
-      image: hero, header: MENU_TITLE, body: MENU_BODY, footer: FOOT, buttons: MENU_BUTTONS,
+    return sendInteractive(sock, jid, {
+      contextImage: hero, header: MENU_TITLE, body: MENU_BODY, footer: FOOT, buttons: MENU_BUTTONS,
     }, rawMessage);
   },
 
