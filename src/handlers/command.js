@@ -87,13 +87,35 @@ function buildCmdCtx(sock, ctx, resolvedName, args) {
 
     // ── Reply helpers ────────────────────────────────────────────────────────
 
-    /** Reply quoting the triggering message */
-    reply: (text, opts = {}) =>
-      sock.sendMessage(
+    /** Reply quoting the triggering message — includes externalAdReply branding */
+    reply: (text, opts = {}) => {
+      try {
+        const _req2 = (await import('module')).createRequire(import.meta.url);
+        const { proto, generateWAMessageFromContent } =
+          (() => { try { return _req2('baileys'); } catch { return null; } })() ?? {};
+        if (proto && generateWAMessageFromContent) {
+          const adReply = proto.ContextInfo.ExternalAdReplyInfo.create({
+            title: 'Yuzuki AI', body: '', renderLargerThumbnail: false,
+            showAdAttribution: false, mediaType: 1, sourceUrl: 'https://wa.me',
+          });
+          const msg = generateWAMessageFromContent(
+            ctx.chat,
+            { extendedTextMessage: proto.Message.ExtendedTextMessage.create({
+                text: String(text),
+                contextInfo: proto.ContextInfo.create({ externalAdReply: adReply }),
+              }),
+            },
+            { userJid: sock.user?.id, quoted: ctx.rawMessage },
+          );
+          return sock.relayMessage(ctx.chat, msg.message, { messageId: msg.key.id });
+        }
+      } catch { /* fall through */ }
+      return sock.sendMessage(
         ctx.chat,
         { text: String(text), ...opts },
         { quoted: ctx.rawMessage },
-      ),
+      );
+    },
 
     /** Reply with @-mentions */
     replyMention: (text, jids = [], opts = {}) =>
