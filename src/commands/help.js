@@ -161,29 +161,14 @@ export async function handler(ctx) {
 
   // ── Full menu: .menu / .help ───────────────────────────────────────────────
 
-  const cats      = getCategoryNames();
-  const totalCmds = cats.reduce((n, cat) => n + getByCategory(cat).length, 0);
-  const botName   = config.botName ?? 'Yuzuki AI';
-  const version   = config.version ?? '2.0.0';
-
-  const experienceLines = EXPERIENCES
-    .map(e => `${e.icon} *${e.label}*\n_${e.desc}_`)
-    .join('\n\n');
-
-  const catLines = cats
-    .filter(c => c !== 'owner')
-    .map(c => {
-      const count = getByCategory(c).length;
-      return `${catIcon(c)} ${capitalize(c)}: ${count}`;
-    })
-    .join('  ·  ');
+  const botName = config.botName ?? 'Yuzuki AI';
+  const version = config.version ?? '2.0.0';
+  const prefix  = config.prefix  ?? '.';
 
   const fullCaption =
     `${getGreeting(pushName)}\n\n` +
-    `${experienceLines}\n\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `${catLines}\n` +
-    `_${totalCmds} total commands  ·  v${version}_`;
+    `_${botName} v${version} — AI, media, search, stickers & more._\n\n` +
+    `Type \`${prefix}allmenu\` to browse all commands.`;
 
   const menuButtons = [
     { text: '🧠 AI Chat',  id: 'cmd_ai'    },
