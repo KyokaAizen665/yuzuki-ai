@@ -273,16 +273,11 @@ export async function handler(ctx) {
       header:       `🤖 ${config.botName} AI`,
       contextImage: getRandomHeroImage('ai'),
       body:
-        `Provider: *${active ?? 'none configured'}*\n\n` +
-        `Just send me a message and I'll reply! Try:\n` +
-        `• _"Explain quantum computing"_\n` +
-        `• _"Write a Python hello world"_\n` +
-        `• _"Summarize machine learning"_\n\n` +
-        `*Task shortcuts:*\n` +
-        `• \`${p}ai summarise <text>\`\n` +
-        `• \`${p}ai translate French <text>\`\n` +
-        `• \`${p}ai explain <topic>\`\n` +
-        `• \`${p}ai debug <code>\``,
+        `◆ ᴩʀᴏᴠɪᴅᴇʀ  *${active ?? 'none'}*\n\n` +
+        `▸ \`${p}ai <message>\`\n\n` +
+        `\`${p}ai summarise <text>\`\n` +
+        `\`${p}ai translate French <text>\`\n` +
+        `\`${p}ai debug <code>\``,
       footer:  `🌸 ${config.botName ?? 'Yuzuki AI'}`,
       buttons: [
         quickReply('🧹 Clear History', 'ai_clear'),

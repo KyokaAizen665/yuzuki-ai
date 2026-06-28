@@ -77,14 +77,14 @@ export async function handler(ctx) {
       chatJid,
       {
         title:     '⚡ Google Gemini',
-        body:      '⚡ Gemini 2.0 Flash connected',
+        body:      'ɢᴇᴍɪɴɪ 2.0 ꜰʟᴀsʜ',
         text:
-          `Google Gemini is connected.\n\n` +
-          `Send any message and Gemini will respond directly.\n\n` +
-          `_Examples:_\n` +
-          `• Explain neural networks\n` +
-          `• Write a Rust function\n` +
-          `• Translate to Japanese`,
+          `╭─────────────────╮\n` +
+          `  ⚡ ɢᴏᴏɢʟᴇ ɢᴇᴍɪɴɪ\n` +
+          `╰─────────────────╯\n\n` +
+          `ɢᴇᴍɪɴɪ 2.0 ꜰʟᴀsʜ ɪs ʀᴇᴀᴅʏ.\n\n` +
+          `▸ \`${p}gemini <message>\`\n` +
+          `▸ ᴇxᴘʟᴀɪɴ  ·  ᴛʀᴀɴsʟᴀᴛᴇ  ·  ᴅᴇʙᴜɢ`,
         sourceUrl: 'https://gemini.google.com',
         hero:      getRandomHeroImage('ai'),
       },

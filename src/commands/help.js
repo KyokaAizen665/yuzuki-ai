@@ -58,10 +58,10 @@ const EXPERIENCES = [
 function getGreeting(name) {
   const hour = new Date().getHours();
   const hi   = name ? `, ${name}` : '';
-  if (hour >= 5  && hour < 12) return `Good morning${hi}. Your assistant is ready.`;
-  if (hour >= 12 && hour < 17) return `Good afternoon${hi}. What would you like to do today?`;
-  if (hour >= 17 && hour < 21) return `Good evening${hi}. Explore AI, media, and more.`;
-  return `Welcome back${hi}. Your assistant is ready.`;
+  if (hour >= 5  && hour < 12) return `ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ${hi}.`;
+  if (hour >= 12 && hour < 17) return `ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏɴ${hi}.`;
+  if (hour >= 17 && hour < 21) return `ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ${hi}.`;
+  return `ʜᴇʟʟᴏ${hi}.`;
 }
 
 // ── Category icons (detail view) ──────────────────────────────────────────────
@@ -128,33 +128,32 @@ export async function handler(ctx) {
 
     if (!entry) {
       return sendInteractive(sock, jid, {
-        header:  'Not Found',
-        body:    `No command matched \`${prefix}${query}\`.\n\nUse the menu to browse available commands.`,
+        header:  '◆ ɴᴏᴛ ꜰᴏᴜɴᴅ',
+        body:    `No command matched \`${prefix}${query}\`.\n\n▸ Use \`${prefix}allmenu\` to browse.`,
         footer:  BRAND_FOOTER,
-        buttons: [quickReply('← Open Menu', 'open_menu')],
+        buttons: [quickReply('← Menu', 'open_menu')],
       }, rawMessage);
     }
 
     const { meta: m } = entry;
     const aliasText = m.aliases?.length
-      ? m.aliases.map(a => `${prefix}${a}`).join(', ')
-      : 'none';
+      ? m.aliases.map(a => `\`${prefix}${a}\``).join('  ')
+      : '—';
 
     const body =
-      `${catIcon(m.category)} *${prefix}${m.name}*\n` +
-      `_${m.description ?? 'No description.'}_\n\n` +
-      `Category  : ${capitalize(m.category ?? 'general')}\n` +
-      `Aliases   : ${aliasText}\n` +
-      `Cooldown  : ${m.cooldown ?? 0}s\n` +
-      `Access    : ${permLabel(m)}`;
+      `◆ \`${prefix}${m.name}\`\n` +
+      `_${m.description ?? ''}_\n\n` +
+      `ᴄᴀᴛ  ${capitalize(m.category ?? 'general')}\n` +
+      `ᴀᴋᴀ  ${aliasText}\n` +
+      `ᴀᴄᴄ  ${permLabel(m)}`;
 
     return sendInteractive(sock, jid, {
       header:  `${prefix}${m.name}`,
       body,
       footer:  BRAND_FOOTER,
       buttons: [
-        quickReply('← Back to Menu', 'back_menu'),
-        quickReply(`▶ Run ${prefix}${m.name}`, `use_${m.name}`),
+        quickReply('← ᴍᴇɴᴜ', 'back_menu'),
+        quickReply(`▸ ʀᴜɴ ${prefix}${m.name}`, `use_${m.name}`),
       ],
     }, rawMessage);
   }
@@ -166,9 +165,13 @@ export async function handler(ctx) {
   const p       = config.prefix  ?? '.';
 
   const fullCaption =
+    `╭──────────────────╮\n` +
+    `  🌸 ʏᴜᴢᴜᴋɪ ᴀɪ  ${version}\n` +
+    `╰──────────────────╯\n\n` +
     `${getGreeting(pushName)}\n\n` +
-    `_${botName} v${version} — AI, media, search, stickers & more._\n\n` +
-    `Type \`${p}allmenu\` to browse all commands.`;
+    `🧠 ᴀɪ  ·  📥 ᴍᴇᴅɪᴀ  ·  🔍 sᴇᴀʀᴄʜ\n` +
+    `⚙️ ᴜᴛɪʟs  ·  👤 sᴜᴘᴘᴏʀᴛ\n\n` +
+    `\`${p}allmenu\` ꜰᴏʀ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs`;
 
   const menuButtons = [
     quickReply('🧠 AI Chat',  'cmd_ai'),
@@ -195,13 +198,16 @@ export async function handler(ctx) {
   } catch {
     // Plain-text fallback — menu never goes silent
     const lines = [
-      `*${botName}*  ·  v${version}\n`,
+      `╭──────────────────╮`,
+      `  🌸 ʏᴜᴢᴜᴋɪ ᴀɪ  ${version}`,
+      `╰──────────────────╯`,
+      '',
       getGreeting(pushName),
       '',
-      ...EXPERIENCES.map(e => `${e.icon} *${e.label}* — ${e.desc}`),
+      `🧠 ᴀɪ  ·  📥 ᴍᴇᴅɪᴀ  ·  🔍 sᴇᴀʀᴄʜ`,
+      `⚙️ ᴜᴛɪʟs  ·  👤 sᴜᴘᴘᴏʀᴛ`,
       '',
-      `_Type \`${p}allmenu\` to browse all commands._`,
-      `_Type \`${p}help <command>\` for details._`,
+      `\`${p}allmenu\` ꜰᴏʀ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs`,
     ];
     await sock.sendMessage(
       jid,

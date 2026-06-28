@@ -31,7 +31,20 @@ const CAT_ICONS = {
   media:      '🎬',
 };
 
+const SC_CATS = {
+  ai:         'ᴀɪ',
+  utility:    'ᴜᴛɪʟɪᴛʏ',
+  owner:      'ᴏᴡɴᴇʀ',
+  general:    'ɢᴇɴᴇʀᴀʟ',
+  fun:        'ꜰᴜɴ',
+  tools:      'ᴛᴏᴏʟs',
+  downloader: 'ᴅᴏᴡɴʟᴏᴀᴅ',
+  search:     'sᴇᴀʀᴄʜ',
+  media:      'ᴍᴇᴅɪᴀ',
+};
+
 function catIcon(cat) { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
+function scCat(cat)   { return SC_CATS[cat?.toLowerCase()] ?? cat; }
 function cap(s)       { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 export async function handler(ctx) {
@@ -39,24 +52,22 @@ export async function handler(ctx) {
   const p    = config.prefix;
   const cats = getCategoryNames();
 
-  // Build full command list text grouped by category
+  // Build compact command list — names + aliases, no descriptions
   const sections = cats.map(cat => {
     const entries = getByCategory(cat);
     if (!entries.length) return null;
 
     const lines = entries.map(e => {
-      const aliases = e.meta.aliases?.length
-        ? ` _(${e.meta.aliases.map(a => `${p}${a}`).join(', ')})_`
-        : '';
-      return `• \`${p}${e.meta.name}\`${aliases} — ${e.meta.description ?? ''}`;
+      const names = [`\`${p}${e.meta.name}\``, ...(e.meta.aliases?.map(a => `\`${p}${a}\``) ?? [])];
+      return `▸ ${names.join('  ')}`;
     });
 
-    return `${catIcon(cat)} *${cap(cat)}*\n${lines.join('\n')}`;
+    return `◆ ${catIcon(cat)} *${scCat(cat)}*\n${lines.join('\n')}`;
   }).filter(Boolean);
 
   const total    = cats.reduce((n, c) => n + getByCategory(c).length, 0);
   const bodyText = sections.join('\n\n');
-  const header   = `📋 All Commands (${total})`;
+  const header   = `◆ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs  (${total})`;
 
   // Buttons use quickReply() so paramsJson is properly encoded.
   // button.js routes cmd_ai → .ai, cmd_dl → .dl, cmd_search → .search
@@ -82,7 +93,7 @@ export async function handler(ctx) {
     const isLast = i === sections.length - 1;
     await sock.sendMessage(
       jid,
-      { text: isLast ? `${sections[i]}\n\n_${total} commands total · ${config.botName} v${config.version}_` : sections[i] },
+      { text: isLast ? `${sections[i]}\n\n_${total} ᴄᴏᴍᴍᴀɴᴅs  ·  ${config.botName}_` : sections[i] },
       i === 0 && rawMessage ? { quoted: rawMessage } : {},
     );
   }
