@@ -1,4 +1,4 @@
-import { getDatabase } from './index.js';
+export { getDatabase } from './index.js';
 export const getUser=j=>getDatabase().prepare('SELECT * FROM users WHERE jid=?').get(j);
 export const isUserBanned=j=>{const r=getUser(j);return r?r.isBanned===1:false;};
 export function touchUser(j,n){const db=getDatabase();if(db.prepare('SELECT jid FROM users WHERE jid=?').get(j))db.prepare('UPDATE users SET lastSeen=CURRENT_TIMESTAMP,pushName=COALESCE(?,pushName),commandCount=commandCount+1 WHERE jid=?').run(n??null,j);else db.prepare('INSERT INTO users(jid,pushName,lastSeen) VALUES(?,?,CURRENT_TIMESTAMP)').run(j,n??null);}
