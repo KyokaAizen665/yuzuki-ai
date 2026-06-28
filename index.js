@@ -2,38 +2,38 @@
 /**
  * Yuzuki AI — Entry point
  *
- * Startup sequence:
- *   1. Config validation (warn/error before anything starts)
- *   2. Directory setup
- *   3. Database init + integrity check (store only — auth uses session folder)
- *   4. Auth state setup (multi-file, session folder)
- *   5. Plugin load
- *   6. Banner
- *   7. Connection manager + socket
- *   8. Health server
- *   9. Graceful shutdown (DB close + WAL checkpoint)
- *  10. Global error safety nets
+ * Phase 7 hardened startup sequence:
+ *  1. Config validation (warn/error before anything starts)
+ *  2. Directory setup
+ *  3. Database init + integrity check
+ *  4. Auth state setup
+ *  5. Plugin load
+ *  6. Banner
+ *  7. Connection manager + socket
+ *  8. Health server (enhanced diagnostics)
+ *  9. Graceful shutdown (DB close + WAL checkpoint)
+ * 10. Global error safety nets (log stack traces, never silently crash)
  */
 import http from 'http';
-import { config }            from './src/config/index.js';
-import { log, printBanner }  from './src/utils/logger.js';
+import { config }                        from './src/config/index.js';
+import { log, printBanner }              from './src/utils/logger.js';
 import { validateStartup, printValidation } from './src/utils/validate.js';
-import { ensureDir }         from './src/utils/helpers.js';
+import { ensureDir }                     from './src/utils/helpers.js';
 import {
   initDatabase,
   checkIntegrity,
   closeDatabase,
-}                            from './src/database/index.js';
-import { useMultiFileAuth }  from './src/database/auth.js';
-import { getBaileysVersion }  from './src/core/socket.js';
+}                                        from './src/database/index.js';
+import { useMultiFileAuth }              from './src/database/auth.js';
+import { getBaileysVersion }             from './src/core/socket.js';
 import {
   initConnectionManager,
   connect,
   shutdown,
-}                            from './src/core/connection.js';
-import { registerEvents }    from './src/events/index.js';
-import { pluginManager }     from './src/plugins/loader.js';
-import { getHealth, getHealthSummary } from './src/services/health.js';
+}                                        from './src/core/connection.js';
+import { registerEvents }                from './src/events/index.js';
+import { pluginManager }                 from './src/plugins/loader.js';
+import { getHealth, getHealthSummary }   from './src/services/health.js';
 
 // ── Shutdown orchestrator ─────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ function gracefulShutdown(sig) {
   _shuttingDown = true;
 
   log.warn(`[boot] ${sig} received — shutting down`);
-  try { shutdown(); } catch (e) { log.error(`[boot] Shutdown error: ${e.message}`); }
+  try { shutdown();      } catch (e) { log.error(`[boot] Shutdown error: ${e.message}`); }
   try { closeDatabase(); } catch (e) { log.error(`[boot] DB close error: ${e.message}`); }
   process.exit(0);
 }
@@ -55,7 +55,7 @@ async function main() {
 
   // ── 1. Config validation ─────────────────────────────────────────────────
   const validation = validateStartup(config);
-  const configOk = printValidation(validation);
+  const configOk   = printValidation(validation);
   if (!configOk) {
     log.error('[boot] Aborting — fix the critical configuration errors above, then restart.');
     process.exit(1);
@@ -66,7 +66,7 @@ async function main() {
   ensureDir(config.tempDir);
   ensureDir(config.logsDir);
 
-  // ── 3. Database (store only) ──────────────────────────────────────────────
+  // ── 3. Database ───────────────────────────────────────────────────────────
   initDatabase(config.dbPath);
 
   const integrity = checkIntegrity();
@@ -77,7 +77,9 @@ async function main() {
     log.db('[db] Integrity check passed');
   }
 
-  // ── 4. Auth (multi-file session folder) ───────────────────────────────────
+  // ── 4. Auth ───────────────────────────────────────────────────────────────
+  // useMultiFileAuth is async — session files live in config.sessionDir,
+  // not in SQLite. The data store (stats/settings/warns) still uses SQLite.
   const { state: authState, saveCreds, clearCreds } = await useMultiFileAuth(config.sessionDir);
 
   // ── 5. Baileys version ────────────────────────────────────────────────────
@@ -116,8 +118,7 @@ async function main() {
           res.end(getHealthSummary());
           return;
         }
-
-        const health = getHealth();
+        const health     = getHealth();
         const statusCode = health.connection.connected ? 200 : 503;
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(health, null, 2));
