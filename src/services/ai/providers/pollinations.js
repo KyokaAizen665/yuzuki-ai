@@ -1,9 +1,9 @@
 /**
- * Pollinations.ai Provider — 100% FREE, zero API key required!
- * https://pollinations.ai — No registration, no cost, no rate limits enforced
+ * Pollinations.ai Provider — free, zero API key required
+ * https://pollinations.ai
  *
- * This is the zero-key fallback provider — always available.
  * Uses the OpenAI-compatible endpoint from Pollinations.
+ * Falls back to an alternate endpoint if the primary one is down.
  *
  * Available models (free, no key):
  *   openai-large  — GPT-4o equivalent
@@ -22,26 +22,27 @@ export const meta = {
   models:       ['openai-large', 'openai', 'mistral', 'mistral-large', 'deepseek'],
 };
 
-const URL = 'https://text.pollinations.ai/openai';
+// Primary and fallback endpoints
+const ENDPOINTS = [
+  'https://text.pollinations.ai/openai',
+  'https://api.pollinations.ai/v1/chat/completions',
+];
 
-export async function generate(messages, opts = {}) {
-  const res = await fetch(URL, {
+async function tryEndpoint(url, payload, timeoutMs) {
+  const res = await fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      model:       opts.model       ?? meta.defaultModel,
-      messages,
-      max_tokens:  opts.maxTokens   ?? 1024,
-      temperature: opts.temperature ?? 0.75,
-      seed:        Math.floor(Math.random() * 999_999),
-    }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+    body:    JSON.stringify(payload),
+    signal:  AbortSignal.timeout(timeoutMs),
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(`Pollinations: ${data?.error?.message ?? `HTTP ${res.status}`}`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const errMsg = data?.error?.message ?? `HTTP ${res.status}`;
+    throw new Error(`Pollinations: ${errMsg}`);
+  }
 
-  const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+  const text = data?.choices?.[0]?.message?.content?.trim() ?? '';
   if (!text) throw new Error('Pollinations: empty response');
 
   return {
@@ -52,6 +53,31 @@ export async function generate(messages, opts = {}) {
   };
 }
 
+export async function generate(messages, opts = {}) {
+  const payload = {
+    model:       opts.model       ?? meta.defaultModel,
+    messages,
+    max_tokens:  opts.maxTokens   ?? 1024,
+    temperature: opts.temperature ?? 0.75,
+    seed:        Math.floor(Math.random() * 999_999),
+  };
+
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const errors    = [];
+
+  for (const url of ENDPOINTS) {
+    try {
+      return await tryEndpoint(url, payload, timeoutMs);
+    } catch (e) {
+      errors.push(`${url}: ${e.message}`);
+    }
+  }
+
+  throw new Error(`Pollinations failed: ${errors.join(' | ')}`);
+}
+
 export async function isAvailable() {
-  return true; // Always available — no key needed
+  // Always available — no key check needed.
+  // Runtime failures are handled by AIManager's fallback chain.
+  return true;
 }

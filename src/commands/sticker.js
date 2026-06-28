@@ -49,7 +49,6 @@ function wrapBratText(text, maxCharsPerLine = 18, maxLines = 4) {
   }
   if (current && lines.length < maxLines) lines.push(current);
   if (lines.length === maxLines && current !== lines[maxLines - 1]) {
-    // truncate last line
     lines[maxLines - 1] = lines[maxLines - 1].slice(0, maxCharsPerLine - 1) + '…';
   }
   return lines;
@@ -57,7 +56,6 @@ function wrapBratText(text, maxCharsPerLine = 18, maxLines = 4) {
 
 /**
  * Build the brat SVG.
- * The blur filter gives the smeared ink effect characteristic of brat.
  */
 function buildBratSVG(text) {
   const lines       = wrapBratText(text.toLowerCase().trim());
@@ -79,9 +77,7 @@ function buildBratSVG(text) {
       <feGaussianBlur in="SourceGraphic" stdDeviation="2.4"/>
     </filter>
   </defs>
-  <!-- Background -->
   <rect width="${BRAT_SIZE}" height="${BRAT_SIZE}" fill="${BRAT_BG}"/>
-  <!-- Blurry white text -->
   <text
     x="50%"
     y="${startY}"
@@ -117,19 +113,12 @@ async function makeBratSticker(text) {
 async function makeSticker(mediaBuffer, mimetype) {
   let pipeline = sharp(mediaBuffer);
 
-  // If video — take first frame; sharp can't decode video directly.
-  // For video frames the caller should provide a jpeg/png already extracted.
-  // For animated webp input, preserve animation.
   const isWebp = mimetype?.includes('webp');
   const isGif  = mimetype?.includes('gif');
 
   if (isWebp || isGif) {
-    // Preserve animation for animated stickers
     pipeline = sharp(mediaBuffer, { animated: true });
   }
-
-  const meta = await pipeline.metadata();
-  const size = Math.min(Math.max(meta.width ?? 512, meta.height ?? 512), 512);
 
   return pipeline
     .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -185,7 +174,7 @@ async function sendHelp(ctx) {
   return ctx.reply(
     `🎨 *Sticker Commands*\n\n` +
     `• \`${p}brat <text>\`   — brat-style sticker\n` +
-    `  _Reply or type:_ \`${p}brat charli xcx\`\n\n` +
+    `  _Example:_ \`${p}brat charli xcx\`\n\n` +
     `• \`${p}sticker\`       — image/video → sticker\n` +
     `  _Quote an image then send this_\n\n` +
     `• \`${p}toimg\`         — sticker → image\n` +
@@ -196,18 +185,22 @@ async function sendHelp(ctx) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function handler(ctx) {
-  const { sock, chat: jid, rawMessage, args, command } = ctx;
+  const { sock, chat: jid, rawMessage, args, body } = ctx;
 
-  // Route aliases:  .brat → brat sub, .sticker / .stick / .s2 → sticker sub,
-  //                 .toimg / .s2i → toimg sub
-  const isBrat   = command === 'brat';
-  const isToImg  = command === 'toimg' || command === 's2i';
-  const sub      = isBrat ? 'brat'
-                 : isToImg ? 'toimg'
-                 : args[0]?.toLowerCase() ?? null;
+  // ── Resolve which sub-command was invoked ─────────────────────────────────
+  // IMPORTANT: ctx.command is the resolved canonical name ('sticker'), not the
+  // alias the user typed. Read the raw input alias directly from ctx.body so
+  // that .brat / .toimg / .s2i are detected correctly.
+  const rawInput = (body ?? '').slice(config.prefix.length).trim().split(/\s+/)[0]?.toLowerCase() ?? '';
 
-  // When called as .sticker without sub, treat whole args as potential brat text
-  // if there's no quoted media (user just typed .sticker hello → brat)
+  const isBrat  = rawInput === 'brat';
+  const isToImg = rawInput === 'toimg' || rawInput === 's2i';
+
+  const sub = isBrat   ? 'brat'
+            : isToImg  ? 'toimg'
+            : args[0]?.toLowerCase() ?? null;
+
+  // Text for brat: all args when called as .brat, or args after sub for .sticker brat
   const textArg = isBrat
     ? args.join(' ').trim()
     : (sub === 'brat' ? args.slice(1).join(' ').trim() : args.join(' ').trim());

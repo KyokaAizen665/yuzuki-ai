@@ -163,12 +163,12 @@ export async function handler(ctx) {
 
   const botName = config.botName ?? 'Yuzuki AI';
   const version = config.version ?? '2.0.0';
-  const prefix  = config.prefix  ?? '.';
+  const p       = config.prefix  ?? '.';
 
   const fullCaption =
     `${getGreeting(pushName)}\n\n` +
     `_${botName} v${version} — AI, media, search, stickers & more._\n\n` +
-    `Type \`${prefix}allmenu\` to browse all commands.`;
+    `Type \`${p}allmenu\` to browse all commands.`;
 
   const menuButtons = [
     { text: '🧠 AI Chat',  id: 'cmd_ai'    },
@@ -200,10 +200,8 @@ export async function handler(ctx) {
       '',
       ...EXPERIENCES.map(e => `${e.icon} *${e.label}* — ${e.desc}`),
       '',
-      `${catLines}`,
-      `_${totalCmds} commands total_`,
-      '',
-      `_Type \`${prefix}help <command>\` for details._`,
+      `_Type \`${p}allmenu\` to browse all commands._`,
+      `_Type \`${p}help <command>\` for details._`,
     ];
     await sock.sendMessage(
       jid,

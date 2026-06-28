@@ -1,7 +1,8 @@
 /**
  * Command: allmenu
- * Full command list grouped by category. Each entry shows the command
- * and its description. Buttons fire actual commands via cmd_ prefix.
+ * Full command list grouped by category.
+ * Trigger: .allmenu  (aliases: commands, allcmds)
+ * Quick-reply buttons at bottom navigate to key commands.
  */
 import { getByCategory, getCategoryNames } from '../plugins/registry.js';
 import { config }                          from '../config/index.js';
@@ -57,6 +58,14 @@ export async function handler(ctx) {
   const bodyText = sections.join('\n\n');
   const header   = `📋 All Commands (${total})`;
 
+  // Buttons use quickReply() so paramsJson is properly encoded.
+  // button.js routes cmd_ai → .ai, cmd_dl → .dl, cmd_search → .search
+  const navButtons = [
+    quickReply('🧠 AI Chat',  'cmd_ai'),
+    quickReply('📥 Download', 'cmd_dl'),
+    quickReply('🔍 Search',   'cmd_search'),
+  ];
+
   // WhatsApp caps interactive body at ~4000 chars — split if needed
   const MAX = 3800;
   if (bodyText.length <= MAX) {
@@ -64,11 +73,7 @@ export async function handler(ctx) {
       header,
       body:    bodyText,
       footer:  BRAND_FOOTER,
-      buttons: [
-        quickReply('🧠 AI Chat',  'cmd_ai'),
-        quickReply('📥 Download', 'cmd_dl'),
-        quickReply('🔍 Search',   'cmd_search'),
-      ],
+      buttons: navButtons,
     }, rawMessage);
   }
 

@@ -16,11 +16,8 @@
  *   .sc  <url>           — SoundCloud audio
  *   .dl help             — show platform list + examples
  *
- * Uses Cobalt's public instance. Users can self-host for higher limits:
- *   https://github.com/imputnet/cobalt
- *
  * Environment (optional):
- *   COBALT_API_URL  — custom Cobalt instance (default: https://api.cobalt.tools)
+ *   COBALT_API_URL  — custom Cobalt instance (default: tries multiple public instances)
  */
 
 import { log } from '../utils/logger.js';
@@ -41,12 +38,20 @@ export const meta = {
   permission:  'public',
 };
 
-// ── Cobalt API ────────────────────────────────────────────────────────────────
+// ── Cobalt API instances ───────────────────────────────────────────────────────
 
-const COBALT_BASE = process.env.COBALT_API_URL?.replace(/\/$/, '') ?? 'https://api.cobalt.tools';
+// If the user set a custom instance, use it exclusively.
+// Otherwise, try each public instance in order until one succeeds.
+const CUSTOM_BASE = process.env.COBALT_API_URL?.replace(/\/$/, '') ?? null;
+
+const PUBLIC_INSTANCES = [
+  'https://api.cobalt.tools',
+  'https://cobalt.privacydev.net',
+  'https://cobalt-api.yt-dl.org',
+];
 
 /**
- * Platform config: maps command alias → { audioOnly, filenameStyle, quality }
+ * Platform config: maps command alias → Cobalt request options
  */
 const PLATFORM_OPTS = {
   yta: { audioOnly: true,  filenameStyle: 'pretty', videoQuality: 'max' },
@@ -60,9 +65,9 @@ const PLATFORM_OPTS = {
 };
 
 /**
- * cobaltFetch(url, opts) — call Cobalt API and return { url, filename, type }
+ * cobaltRequest(base, mediaUrl, opts) — single Cobalt instance attempt
  */
-async function cobaltFetch(mediaUrl, opts = {}) {
+async function cobaltRequest(base, mediaUrl, opts = {}) {
   const body = {
     url:           mediaUrl,
     videoQuality:  opts.videoQuality  ?? '1080',
@@ -74,7 +79,7 @@ async function cobaltFetch(mediaUrl, opts = {}) {
   };
   if (opts.audioOnly) body.downloadMode = 'audio';
 
-  const res = await fetch(`${COBALT_BASE}/`, {
+  const res = await fetch(`${base}/`, {
     method:  'POST',
     headers: {
       'Accept':       'application/json',
@@ -86,7 +91,7 @@ async function cobaltFetch(mediaUrl, opts = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.code ?? `Cobalt HTTP ${res.status}`);
+    throw new Error(err?.error?.code ?? `HTTP ${res.status}`);
   }
 
   const data = await res.json();
@@ -100,7 +105,6 @@ async function cobaltFetch(mediaUrl, opts = {}) {
   }
 
   if (data.status === 'picker') {
-    // Multiple items (e.g. Instagram carousel) — return first item
     const first = data.picker?.[0];
     if (!first) throw new Error('No media found in response');
     return { url: first.url, filename: data.filename ?? 'media', type: 'picker', all: data.picker };
@@ -114,7 +118,36 @@ async function cobaltFetch(mediaUrl, opts = {}) {
 }
 
 /**
- * Detect URL → platform shortname for logging/display
+ * cobaltFetch(mediaUrl, opts) — tries each instance until one succeeds
+ */
+async function cobaltFetch(mediaUrl, opts = {}) {
+  const instances = CUSTOM_BASE ? [CUSTOM_BASE] : PUBLIC_INSTANCES;
+  const errors    = [];
+
+  for (const base of instances) {
+    try {
+      log.debug(`[downloader] Trying Cobalt instance: ${base}`);
+      const result = await cobaltRequest(base, mediaUrl, opts);
+      log.debug(`[downloader] Success with instance: ${base}`);
+      return result;
+    } catch (e) {
+      log.warn(`[downloader] Instance ${base} failed: ${e.message}`);
+      errors.push(`${base}: ${e.message}`);
+
+      // Don't try more instances for certain definitive errors
+      const msg = e.message ?? '';
+      if (msg.includes('rate-limit') || msg.includes('unavailable') ||
+          msg.includes('unsupported') || msg.includes('too_long')) {
+        throw e;
+      }
+    }
+  }
+
+  throw new Error(`All Cobalt instances failed:\n${errors.slice(0, 3).join('\n')}`);
+}
+
+/**
+ * Detect URL → platform shortname for display
  */
 function detectPlatform(url) {
   try {
@@ -136,8 +169,6 @@ function detectPlatform(url) {
 
 /**
  * downloadBuffer(cobaltUrl) — stream Cobalt redirect into Buffer
- * Cobalt returns either a direct media URL or a stream URL.
- * We proxy the download so we can send via Baileys sendMessage.
  */
 async function downloadBuffer(cobaltUrl) {
   const res = await fetch(cobaltUrl, {
@@ -157,6 +188,132 @@ async function downloadBuffer(cobaltUrl) {
   return { buffer, contentType };
 }
 
+// ── Keyword search (all platforms) ───────────────────────────────────────────
+
+/**
+ * Platform → DuckDuckGo site-scope pattern.
+ * The pattern is matched against candidate URLs extracted from DDG HTML.
+ */
+const SEARCH_SITES = {
+  yt:  { site: 'youtube.com',   pattern: /youtube\.com\/watch\?v=[\w-]+/i },
+  yta: { site: 'youtube.com',   pattern: /youtube\.com\/watch\?v=[\w-]+/i },
+  tt:  { site: 'tiktok.com',    pattern: /tiktok\.com\/@[^/]+\/video\/\d+/i },
+  ig:  { site: 'instagram.com', pattern: /instagram\.com\/(?:p|reel)\/[\w-]+/i },
+  tw:  { site: 'x.com',         pattern: /(?:x|twitter)\.com\/\w+\/status\/\d+/i },
+  pin: { site: 'pinterest.com', pattern: /pinterest\.com\/pin\/\d+/i },
+  sc:  { site: 'soundcloud.com', pattern: /soundcloud\.com\/[\w-]+\/[\w-]+/i },
+  dl:  { site: null,             pattern: null },
+};
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+/**
+ * searchViaDuckDuckGo(alias, query)
+ * Performs a site-scoped DuckDuckGo HTML search and returns the first
+ * matching URL for that platform.
+ */
+async function searchViaDuckDuckGo(alias, query) {
+  const cfg = SEARCH_SITES[alias];
+  if (!cfg?.site) throw new Error(`No search support for alias: ${alias}`);
+
+  const q       = `site:${cfg.site} ${query}`;
+  const encoded = encodeURIComponent(q);
+  const ddgUrl  = `https://html.duckduckgo.com/html/?q=${encoded}`;
+
+  const res = await fetch(ddgUrl, {
+    headers: {
+      'User-Agent':      UA,
+      'Accept':          'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) throw new Error(`DuckDuckGo search ${res.status}`);
+
+  const html = await res.text();
+
+  // DDG redirect hrefs contain the real URL in the `uddg` query param
+  const uddgMatches = [...html.matchAll(/uddg=([^&"'\s]+)/g)];
+  for (const m of uddgMatches) {
+    const candidate = decodeURIComponent(m[1]);
+    if (!cfg.pattern || cfg.pattern.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Fallback: look for bare URLs in result text
+  if (cfg.pattern) {
+    const bare = html.match(cfg.pattern);
+    if (bare) return `https://${bare[0]}`;
+  }
+
+  throw new Error(`No ${alias} results found for "${query}"`);
+}
+
+/**
+ * searchPinterestViaApi(query) — Pinterest's unofficial resource API.
+ * Returns a full pinterest.com/pin/{id}/ URL. Best for video pins.
+ */
+async function searchPinterestViaApi(query) {
+  const encoded   = encodeURIComponent(query);
+  const dataParam = encodeURIComponent(JSON.stringify({
+    options: { query, scope: 'videos', page_size: 5 },
+  }));
+
+  const apiUrl =
+    `https://www.pinterest.com/resource/BaseSearchResource/get/` +
+    `?source_url=${encodeURIComponent(`/search/videos/?q=${encoded}`)}` +
+    `&data=${dataParam}` +
+    `&_=${Date.now()}`;
+
+  const res = await fetch(apiUrl, {
+    headers: {
+      'Accept':           'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Referer':          `https://www.pinterest.com/search/videos/?q=${encoded}`,
+      'User-Agent':       UA,
+      'Accept-Language':  'en-US,en;q=0.9',
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+
+  if (!res.ok) throw new Error(`Pinterest API ${res.status}`);
+
+  const data    = await res.json();
+  const results = data?.resource_response?.data?.results ?? [];
+  if (!results.length) throw new Error('No pins in API response');
+
+  const pin = results.find(r => r.videos || r.is_video) ?? results[0];
+  if (!pin?.id) throw new Error('Could not extract pin ID');
+
+  return `https://www.pinterest.com/pin/${pin.id}/`;
+}
+
+/**
+ * searchByKeyword(alias, query)
+ * Unified entry point for all platform keyword searches.
+ *   pin  → Pinterest API → Pinterest page scrape → DuckDuckGo
+ *   rest → DuckDuckGo site-scoped search
+ */
+async function searchByKeyword(alias, query) {
+  // Pinterest: try native API first (better video results)
+  if (alias === 'pin') {
+    try {
+      const url = await searchPinterestViaApi(query);
+      log.debug(`[pin] API search → ${url}`);
+      return url;
+    } catch (e) {
+      log.warn(`[pin] API search failed (${e.message}), trying DDG`);
+    }
+  }
+
+  // DuckDuckGo for all platforms (including pin fallback)
+  const url = await searchViaDuckDuckGo(alias, query);
+  log.debug(`[${alias}] DDG search → ${url}`);
+  return url;
+}
+
 // ── Help card ─────────────────────────────────────────────────────────────────
 
 async function sendHelpCard(ctx) {
@@ -164,18 +321,19 @@ async function sendHelpCard(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
 
   const body =
-    `📥 *Media Downloader — Supported Platforms*\n\n` +
+    `📥 *Media Downloader*\n` +
+    `_All commands accept a URL **or** a search keyword._\n\n` +
     `*Video*\n` +
-    `• \`${p}yt <url>\`   — YouTube (1080p mp4)\n` +
-    `• \`${p}tt <url>\`   — TikTok (no watermark)\n` +
-    `• \`${p}ig <url>\`   — Instagram post / reel\n` +
-    `• \`${p}tw <url>\`   — Twitter / X video\n` +
-    `• \`${p}pin <url>\`  — Pinterest video\n\n` +
+    `• \`${p}yt  <url or keyword>\`  — YouTube (1080p mp4)\n` +
+    `• \`${p}tt  <url or keyword>\`  — TikTok (no watermark)\n` +
+    `• \`${p}ig  <url or keyword>\`  — Instagram post / reel\n` +
+    `• \`${p}tw  <url or keyword>\`  — Twitter / X video\n` +
+    `• \`${p}pin <url or keyword>\`  — Pinterest video\n\n` +
     `*Audio*\n` +
-    `• \`${p}yta <url>\`  — YouTube audio (mp3)\n` +
-    `• \`${p}sc <url>\`   — SoundCloud track\n\n` +
-    `*Auto-detect*\n` +
-    `• \`${p}dl <url>\`   — Paste any supported URL\n\n` +
+    `• \`${p}yta <url or keyword>\`  — YouTube audio (mp3)\n` +
+    `• \`${p}sc  <url or keyword>\`  — SoundCloud track\n\n` +
+    `*Auto-detect (URL only)*\n` +
+    `• \`${p}dl <url>\`              — Any supported URL\n\n` +
     `_Powered by Cobalt.tools — no login required_`;
 
   return sendInteractive(sock, jid, {
@@ -184,8 +342,6 @@ async function sendHelpCard(ctx) {
     body,
     footer:  `🌸 ${config.botName}`,
     buttons: [
-      quickReply('▶ Try YouTube',   `use_yt`),
-      quickReply('▶ Try TikTok',    `use_tt`),
       ctaUrl('🌐 Cobalt Site', 'https://cobalt.tools'),
     ],
   }, rawMessage);
@@ -194,39 +350,74 @@ async function sendHelpCard(ctx) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function handler(ctx) {
-  const { sock, chat: jid, command, args, rawMessage, isOwner } = ctx;
+  const { sock, chat: jid, command, args, rawMessage } = ctx;
 
-  // .dl help
+  // .dl help or bare .dl
   if (args[0]?.toLowerCase() === 'help' || (command === 'dl' && !args[0])) {
     return sendHelpCard(ctx);
   }
 
-  // Determine URL and platform options
-  const rawUrl = args.join('');
-  if (!rawUrl || !rawUrl.startsWith('http')) {
+  // Map command alias → Cobalt options
+  const alias = command.toLowerCase();
+  const opts  = PLATFORM_OPTS[alias] ?? PLATFORM_OPTS.dl;
+
+  // ── Keyword search (all supported aliases) ────────────────────────────────
+  // If the argument doesn't look like a URL, treat it as a search keyword.
+  // .dl requires a URL — it has no single platform to scope the search to.
+  const rawArg     = args.join(' ').trim();
+  let resolvedUrl  = rawArg;
+  const isKeyword  = rawArg && !rawArg.startsWith('http');
+  const canSearch  = isKeyword && alias !== 'dl' && SEARCH_SITES[alias]?.site;
+
+  if (isKeyword && alias === 'dl') {
     return ctx.reply(
-      `🔗 Please provide a URL.\n` +
-      `Example: \`${config.prefix}dl https://youtu.be/dQw4w9WgXcQ\`\n\n` +
-      `Use \`${config.prefix}dl help\` for supported platforms.`
+      `🔗 \`${config.prefix}dl\` requires a full URL.\n` +
+      `To search by keyword use a platform command:\n` +
+      `_Example:_ \`${config.prefix}yt never gonna give you up\``
+    );
+  }
+
+  if (canSearch) {
+    try { await ctx.react('🔍'); } catch {}
+    try { await sock.sendPresenceUpdate('composing', jid); } catch {}
+
+    try {
+      resolvedUrl = await searchByKeyword(alias, rawArg);
+      log.info(`[${alias}] Resolved "${rawArg}" → ${resolvedUrl}`);
+    } catch (err) {
+      try { await sock.sendPresenceUpdate('paused', jid); } catch {}
+      try { await ctx.react('❌'); } catch {}
+      log.warn(`[${alias}] Search failed: ${err.message}`);
+      return ctx.reply(
+        `❌ Couldn't find a result for *"${rawArg}"* on ${alias.toUpperCase()}.\n` +
+        `Try a different keyword, or paste the URL directly.\n` +
+        `Use \`${config.prefix}dl help\` to see all supported commands.`
+      );
+    }
+  }
+
+  // No input at all
+  if (!resolvedUrl) {
+    return ctx.reply(
+      `🔗 Provide a URL or search keyword.\n` +
+      `_Examples:_\n` +
+      `• \`${config.prefix}yt never gonna give you up\`\n` +
+      `• \`${config.prefix}yt https://youtu.be/dQw4w9WgXcQ\`\n\n` +
+      `Use \`${config.prefix}dl help\` for all supported platforms.`
     );
   }
 
   // Normalize URL
   let mediaUrl;
   try {
-    mediaUrl = new URL(rawUrl).toString();
+    mediaUrl = new URL(resolvedUrl).toString();
   } catch {
     return ctx.reply('❌ Invalid URL — please provide a full link starting with https://');
   }
 
-  // Map command alias → Cobalt options
-  const alias    = command.toLowerCase();
-  const opts     = PLATFORM_OPTS[alias] ?? PLATFORM_OPTS.dl;
   const platform = detectPlatform(mediaUrl);
-
   log.info(`[downloader] ${platform} | ${alias} | ${mediaUrl.slice(0, 80)}`);
 
-  // React: signal download starting
   try { await ctx.react('⏬'); } catch {}
   try { await sock.sendPresenceUpdate('composing', jid); } catch {}
 
@@ -237,12 +428,11 @@ export async function handler(ctx) {
     try { await sock.sendPresenceUpdate('paused', jid); } catch {}
     try { await ctx.react('❌'); } catch {}
 
-    // Friendly error messages
     const msg = err.message ?? '';
     if (msg.includes('rate-limit')) {
       return ctx.reply('⏳ Rate limited — wait a moment then try again.');
     }
-    if (msg.includes('content.too_long') || msg.includes('too large')) {
+    if (msg.includes('content.too_long') || msg.includes('too large') || msg.includes('too_long')) {
       return ctx.reply('❌ This file is too large to send via WhatsApp.');
     }
     if (msg.includes('content.video.unavailable') || msg.includes('unavailable')) {
@@ -252,6 +442,12 @@ export async function handler(ctx) {
       return ctx.reply(
         `❌ This platform or URL is not supported.\n` +
         `Use \`${config.prefix}dl help\` to see supported sites.`
+      );
+    }
+    if (msg.includes('All Cobalt instances failed')) {
+      return ctx.reply(
+        `❌ Download service is temporarily unavailable.\n` +
+        `Please try again in a few minutes.`
       );
     }
 
@@ -272,7 +468,7 @@ export async function handler(ctx) {
 
   try { await sock.sendPresenceUpdate('paused', jid); } catch {}
 
-  // File size guard — WhatsApp limit ~64MB for most clients
+  // File size guard — WhatsApp limit ~64MB
   const sizeMB = buffer.length / 1_048_576;
   if (sizeMB > 64) {
     try { await ctx.react('❌'); } catch {}
@@ -305,7 +501,6 @@ export async function handler(ctx) {
     }
     try { await ctx.react('✅'); } catch {}
 
-    // If Instagram carousel — send picker info
     if (cobaltResult.type === 'picker' && cobaltResult.all?.length > 1) {
       const remaining = cobaltResult.all.slice(1).length;
       await ctx.reply(
