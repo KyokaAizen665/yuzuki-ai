@@ -12,27 +12,17 @@
  *   getHealth()        → full diagnostic object
  *   getHealthSummary() → one-line string summary
  */
-import { config }      from '../config/index.js';
-import { getSocket }   from '../core/connection.js';
+import { config }        from '../config/index.js';
+import { getSocket }     from '../core/connection.js';
 import { pluginManager } from '../plugins/loader.js';
-import { getDatabase } from '../database/index.js';
-import { getStat }     from '../database/store.js';
-import * as AIManager  from './ai/AIManager.js';
+import { getDatabase }   from '../database/index.js';
+import { getStat }       from '../database/store.js';
+import * as AIManager    from './ai/AIManager.js';
+import { formatUptime }  from '../utils/helpers.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const mb = bytes => parseFloat((bytes / 1024 / 1024).toFixed(1));
-
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (d) return `${d}d ${h}h ${m}m`;
-  if (h) return `${h}h ${m}m ${s}s`;
-  if (m) return `${m}m ${s}s`;
-  return `${s}s`;
-}
 
 // ── Sub-system checks ─────────────────────────────────────────────────────────
 
@@ -42,7 +32,7 @@ function _systemHealth() {
     node:        process.version,
     platform:    process.platform,
     uptime:      parseFloat(process.uptime().toFixed(1)),
-    uptimeHuman: formatUptime(process.uptime()),
+    uptimeHuman: formatUptime(process.uptime() * 1000),
     pid:         process.pid,
     memory: {
       heapUsedMB:   mb(mem.heapUsed),
@@ -59,7 +49,7 @@ function _connectionHealth() {
     const sock = getSocket();
     return {
       connected: !!sock,
-      jid:       sock?.user?.id  ?? null,
+      jid:       sock?.user?.id   ?? null,
       name:      sock?.user?.name ?? null,
     };
   } catch {
