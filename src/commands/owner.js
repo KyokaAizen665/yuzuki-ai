@@ -16,7 +16,8 @@ import {
   quickReply,
 } from '../services/rich-messages.js';
 import { getRandomHeroImage } from '../services/hero-images.js';
-import { config } from '../config/index.js';
+import { config }             from '../config/index.js';
+import { BRAND_FOOTER }       from '../services/brand.js';
 
 export const meta = {
   name:        'owner',
@@ -26,8 +27,6 @@ export const meta = {
   cooldown:    10,
   permission:  'public',
 };
-
-const BRAND_FOOTER = `🌸 ${config.botName ?? 'Yuzuki AI'}`;
 
 export async function handler(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
@@ -39,7 +38,6 @@ export async function handler(ctx) {
     buttons.unshift(ctaCall('📞 Call Owner', `+${ownerNum}`));
   }
 
-  // Optional channel or support URL
   if (config.officialChannelUrl) {
     buttons.push(ctaUrl('📢 Official Channel', config.officialChannelUrl));
   }
