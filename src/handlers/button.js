@@ -97,6 +97,12 @@ function resolveBody(id, displayText) {
   //
   // Fallback: if display_text is missing or equals the raw id string, use the
   // human-readable part after "suggest_" as a best-effort prompt.
+  // Direct command IDs — if the id is itself a command (starts with the
+  // configured prefix, e.g. ".allmenu", ".ai", ".dl"), run it as-is.
+  // This lets quick-reply buttons use the exact command string as their id
+  // without needing a named route entry here.
+  if (id.startsWith(config.prefix)) return id;
+
   if (id.startsWith('suggest_')) {
     const prompt = displayText?.trim();
     if (prompt && prompt !== id) {
