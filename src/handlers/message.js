@@ -1,14 +1,15 @@
 /**
- * Message Handler Pipeline — Phase 3 patch
+ * Message Handler Pipeline — Phase 3 patch + Antilink enforcement
  *
- * PATCH CHANGES vs Phase 2.5:
+ * PATCH CHANGES vs Phase 3:
+ *   • Antilink enforcement: if a group has antilinkEnabled=1, messages
+ *     containing URLs or WhatsApp group links from non-admins are deleted
+ *     and a warning is sent.
  *   • handlePassiveAI: adds suggestedPrompts to sendAIRichResponse call.
- *     Passive DM responses now include the same follow-up buttons as the
- *     explicit .ai command, so suggest_* routing works in both paths.
- *   • All other pipeline logic unchanged.
  *
  * Flow:
  *   ctx → filters → DB touch → stat → auto-read → auto-typing
+ *       → antilink check (group messages only)
  *       → command routing (prefixed messages)
  *       → button response routing
  *       → passive AI DM trigger
@@ -31,12 +32,64 @@ import {
   sendReaction,
   parseAIText,
 } from '../services/rich-messages.js';
+import { getGroup } from '../database/store.js';
+import { normalizeJid } from '../utils/jid.js';
 
 const BUTTON_CONTENT_TYPES = new Set([
   'interactiveResponseMessage',
   'nativeFlowResponseMessage',
   'buttonsResponseMessage',
 ]);
+
+// ── Antilink patterns ─────────────────────────────────────────────────────────
+
+const LINK_RE = /https?:\/\/\S+|wa\.me\/\S+|chat\.whatsapp\.com\/\S+/i;
+
+/**
+ * checkAntilink(sock, ctx)
+ * Returns true if the message was deleted (pipeline should stop).
+ */
+async function checkAntilink(sock, ctx) {
+  if (!ctx.isGroup)  return false;
+  if (ctx.fromMe)    return false;
+  if (!ctx.body)     return false;
+  if (!LINK_RE.test(ctx.body)) return false;
+
+  const jid = normalizeJid(ctx.chat);
+  const grp = getGroup(jid);
+  if (!grp?.antilinkEnabled) return false;
+
+  // Admins and owner are exempt
+  if (isOwner(ctx.sender)) return false;
+  try {
+    const meta = await sock.groupMetadata(jid);
+    const participant = meta?.participants?.find(
+      p => normalizeJid(p.id) === normalizeJid(ctx.sender)
+    );
+    if (participant?.admin) return false; // admin/superadmin exempt
+  } catch { /* fail open — don't block on metadata error */ }
+
+  // Delete the message
+  try {
+    await sock.sendMessage(jid, {
+      delete: ctx.key,
+    });
+  } catch (e) {
+    log.warn(`[antilink] Could not delete message from ${ctx.sender}: ${e.message}`);
+    return false;
+  }
+
+  // Warn the user
+  try {
+    await sock.sendMessage(jid, {
+      text:     `⛔ @${ctx.sender.split('@')[0]}, links are not allowed in this group.`,
+      mentions: [ctx.sender],
+    });
+  } catch { /* best-effort */ }
+
+  log.info(`[antilink] Deleted link from ${ctx.sender} in ${jid}`);
+  return true;
+}
 
 // ── Passive DM handler ────────────────────────────────────────────────────────
 
@@ -63,7 +116,7 @@ async function handlePassiveAI(sock, ctx) {
     });
   } catch (err) {
     log.error(`[ai:passive] Chat error for ${sender}: ${err.message}`);
-    try { await sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
+    try { await sock.sendPresenceUpdate('paused', chatJid); } catch {}
 
     const isConfigErr = err.message.includes('No AI providers') ||
                         err.message.includes('API key') ||
@@ -80,13 +133,11 @@ async function handlePassiveAI(sock, ctx) {
     return;
   }
 
-  try { await sock.sendPresenceUpdate('paused', chatJid); } catch { /* ok */ }
+  try { await sock.sendPresenceUpdate('paused', chatJid); } catch {}
 
   const parsed = parseAIText(result.text);
   try { await sendReaction(sock, chatJid, ctx.key, parsed.codeBlocks.length ? '💻' : '✅'); } catch {}
 
-  // PATCH: add suggestedPrompts so passive DM replies include follow-up buttons.
-  // These route through button.js suggest_* → .ai <display_text> (Phase 3 fix).
   const suggestedPrompts = parsed.codeBlocks.length
     ? ['Explain this code', 'Improve it', 'Add comments']
     : ['Continue', 'Explain more', 'Give example'];
@@ -133,13 +184,18 @@ export async function handleMessage(sock, ctx) {
       } catch { /* best-effort */ }
     }
 
+    // ── Antilink enforcement (before command routing) ──────────────────
+    if (ctx.isGroup && !ctx.fromMe) {
+      const blocked = await checkAntilink(sock, ctx);
+      if (blocked) return true;
+    }
+
     if (ctx.body?.startsWith(config.prefix)) {
       await routeCommand(sock, ctx);
       return true;
     }
 
-    // Sticker caption trigger — sticker sent with a caption like ".menu"
-    // fires as if the user typed that text directly.
+    // Sticker caption trigger
     if (
       ctx.contentType === 'stickerMessage' &&
       ctx.media?.caption?.startsWith(config.prefix) &&
