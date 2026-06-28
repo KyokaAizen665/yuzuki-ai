@@ -68,6 +68,44 @@
     return _baileysMod;
   }
 
+// ── Text message with externalAdReply branding ───────────────────────────────
+
+/**
+ * _sendTextWithAdReply(sock, jid, text, quoted?) → Promise<void>
+ *
+ * Sends a text message branded with an externalAdReply preview card
+ * (small thumbnail, renderLargerThumbnail=false). Used by sendMarkdown,
+ * sendCode, and sendCitation so all plain-text bot responses carry
+ * consistent branding. Falls back to plain sock.sendMessage on any error.
+ */
+async function _sendTextWithAdReply(sock, jid, text, quoted) {
+  try {
+    const { proto, generateWAMessageFromContent } = getBaileys();
+    const adReply = proto.ContextInfo.ExternalAdReplyInfo.create({
+      title:                 'Yuzuki AI',
+      body:                  '',
+      renderLargerThumbnail: false,
+      showAdAttribution:     false,
+      mediaType:             1,
+      sourceUrl:             'https://wa.me',
+    });
+    const msg = generateWAMessageFromContent(
+      jid,
+      {
+        extendedTextMessage: proto.Message.ExtendedTextMessage.create({
+          text,
+          contextInfo: proto.ContextInfo.create({ externalAdReply: adReply }),
+        }),
+      },
+      { userJid: sock.user?.id, quoted },
+    );
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+  } catch {
+    await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
+  }
+}
+
+
   // ── NativeFlow Button Builders ────────────────────────────────────────────────
 
   /**
@@ -190,8 +228,8 @@
                     ? { thumbnailUrl:    contextImage.url }
                     : { thumbnail:       contextImage.data }),
                   mediaType:             1,
-                  renderLargerThumbnail: true,
-                  showAdAttribution:     true,
+                  renderLargerThumbnail: false,
+                  showAdAttribution:     false,
                   sourceUrl:             'https://wa.me',
                 }),
               }),
@@ -443,10 +481,10 @@
    */
   export async function sendMarkdown(sock, jid, text, quoted) {
     try {
-      await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
+      await _sendTextWithAdReply(sock, jid, text, quoted);
     } catch (e) {
       log.error(`[rich-messages] sendMarkdown failed: ${e.message}`);
-      throw e;
+      await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
     }
   }
 
@@ -460,10 +498,10 @@
     const header = language ? `*${language}*\n` : '';
     const text   = `${header}\`\`\`${code}\`\`\``;
     try {
-      await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
+      await _sendTextWithAdReply(sock, jid, text, quoted);
     } catch (e) {
       log.error(`[rich-messages] sendCode failed: ${e.message}`);
-      throw e;
+      await sock.sendMessage(jid, { text }, quoted ? { quoted } : {});
     }
   }
 
@@ -543,10 +581,10 @@
     const body = `📎 *${source}*\n\n> ${content.split('\n').join('\n> ')}`
       + (comment ? `\n\n${comment}` : '');
     try {
-      await sock.sendMessage(jid, { text: body }, quoted ? { quoted } : {});
+      await _sendTextWithAdReply(sock, jid, body, quoted);
     } catch (e) {
       log.error(`[rich-messages] sendCitation failed: ${e.message}`);
-      throw e;
+      await sock.sendMessage(jid, { text: body }, quoted ? { quoted } : {});
     }
   }
 
