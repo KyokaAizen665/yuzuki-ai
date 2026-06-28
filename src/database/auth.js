@@ -1,41 +1,67 @@
 /**
- * SQLite Auth State Adapter
- * Buffer-safe serialization — see utils/buffer.js.
- * Pairing loop guard via hasValidSession().
+ * Multi-File Auth State Adapter
+ *
+ * Delegates entirely to Baileys' built-in useMultiFileAuthState so that
+ * all session data (creds.json + pre-key files) is written to the session
+ * directory instead of SQLite.
+ *
+ * Directory layout (inside config.sessionDir):
+ *   creds.json          — identity / registration state
+ *   app-state-sync-*.json, pre-key-*.json, ... — key material
  */
-import { DatabaseSync } from 'node:sqlite';
 import { createRequire } from 'module';
-import { serialize, deserialize } from '../utils/buffer.js';
+import path from 'path';
+import fs   from 'fs';
 import { log } from '../utils/logger.js';
+
 const _req = createRequire(import.meta.url);
-const { initAuthCreds } = _req('baileys');
-let _db = null;
-function getDb(dbPath) {
-  if(_db)return _db;
-  _db=new DatabaseSync(dbPath);
-  _db.exec('PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;');
-  _db.exec('CREATE TABLE IF NOT EXISTS auth_creds(id TEXT PRIMARY KEY,data TEXT NOT NULL)');
-  _db.exec('CREATE TABLE IF NOT EXISTS auth_keys(id TEXT PRIMARY KEY,data TEXT NOT NULL)');
-  return _db;
-}
-export function useSQLiteAuthState(dbPath) {
-  const db = getDb(dbPath);
-  const loadCreds = () => {
-    const r=db.prepare('SELECT data FROM auth_creds WHERE id=?').get('creds');
-    if(!r){log.auth('[auth] Fresh session');return initAuthCreds();}
-    try{const c=deserialize(r.data);log.auth(`[auth] Restored (jid:${c?.me?.id??'not paired'})`);return c;}
-    catch(e){log.warn(`[auth] Corrupt: ${e.message}`);db.prepare('DELETE FROM auth_creds').run();return initAuthCreds();}
+const { useMultiFileAuthState } = _req('baileys');
+
+/**
+ * useMultiFileAuth(sessionDir) → { state, saveCreds, clearCreds }
+ *
+ * Drop-in replacement for useSQLiteAuthState.
+ * saveCreds is already provided by Baileys; clearCreds wipes the session folder.
+ */
+export async function useMultiFileAuth(sessionDir) {
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+
+  const jid = state?.creds?.me?.id ?? null;
+  if (jid) {
+    log.auth(`[auth] Restored session (jid:${jid})`);
+  } else {
+    log.auth('[auth] Fresh session — pairing required');
+  }
+
+  const clearCreds = () => {
+    try {
+      const files = fs.readdirSync(sessionDir);
+      for (const f of files) {
+        try { fs.rmSync(path.join(sessionDir, f), { recursive: true, force: true }); } catch {}
+      }
+      log.auth('[auth] Session cleared');
+    } catch (e) {
+      log.warn(`[auth] Could not clear session directory: ${e.message}`);
+    }
   };
-  const saveCreds  = async () => { db.prepare('INSERT OR REPLACE INTO auth_creds(id,data) VALUES(?,?)').run('creds',serialize(state.creds)); };
-  const clearCreds = () => { db.prepare('DELETE FROM auth_creds').run();db.prepare('DELETE FROM auth_keys').run();state.creds=initAuthCreds();log.auth('[auth] Cleared'); };
-  const keys = {
-    get: async(type,ids) => { const r={}; for(const id of ids){const row=db.prepare('SELECT data FROM auth_keys WHERE id=?').get(`${type}:${id}`);if(row)try{r[id]=deserialize(row.data);}catch{}}return r; },
-    set: async(data) => { const u=db.prepare('INSERT OR REPLACE INTO auth_keys(id,data) VALUES(?,?)');const d=db.prepare('DELETE FROM auth_keys WHERE id=?');for(const[t,m]of Object.entries(data))for(const[id,v]of Object.entries(m))v!=null?u.run(`${t}:${id}`,serialize(v)):d.run(`${t}:${id}`); },
-  };
-  const state={creds:loadCreds(),keys};
-  log.db('[auth] Auth adapter ready');
-  return{state,saveCreds,clearCreds};
+
+  log.db('[auth] Multi-file auth adapter ready');
+  return { state, saveCreds, clearCreds };
 }
-export function hasValidSession(dbPath) {
-  try{const db=getDb(dbPath);const r=db.prepare('SELECT data FROM auth_creds WHERE id=?').get('creds');if(!r)return false;const c=deserialize(r.data);return!!(c?.me?.id);}catch{return false;}
+
+/**
+ * hasValidSession(sessionDir) → boolean
+ *
+ * Returns true if creds.json exists and contains a paired JID.
+ * Used to skip unnecessary pairing attempts on reconnect.
+ */
+export function hasValidSession(sessionDir) {
+  try {
+    const credsPath = path.join(sessionDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+    return !!(creds?.me?.id);
+  } catch {
+    return false;
+  }
 }
