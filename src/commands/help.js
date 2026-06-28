@@ -171,9 +171,9 @@ export async function handler(ctx) {
     `Type \`${p}allmenu\` to browse all commands.`;
 
   const menuButtons = [
-    { text: '🧠 AI Chat',  id: 'cmd_ai'    },
-    { text: '📥 Download', id: 'cmd_dl'    },
-    { text: '🔍 Search',   id: 'cmd_search'},
+    quickReply('🧠 AI Chat',  'cmd_ai'),
+    quickReply('📥 Download', 'cmd_dl'),
+    quickReply('🔍 Search',   'cmd_search'),
   ];
 
   // ── Hero image from HeroManager ───────────────────────────────────────────
