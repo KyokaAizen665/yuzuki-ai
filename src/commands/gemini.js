@@ -25,6 +25,7 @@ import { config }            from '../config/index.js';
 import {
   sendReaction,
   quickReply,
+  sendExternalReply,
 }                            from '../services/rich-messages.js';
 import { getRandomHeroImage } from '../services/hero-images.js';
 import { renderAIResponse }   from '../services/ai-renderer.js';
@@ -71,37 +72,24 @@ export async function handler(ctx) {
   if (!prompt) {
     const p = config.prefix;
 
-    try {
-      await sock.sendMessage(
-        chatJid,
-        {
-          contextInfo: {
-            externalAdReply: {
-              title:                 '⚡ Google Gemini',
-              body:                  '',
-              ...((() => { const i = getRandomHeroImage('ai'); return i.url ? { thumbnailUrl: i.url } : { thumbnail: i.data }; })()),
-              mediaType:             1,
-              renderLargerThumbnail: true,
-              sourceUrl:             '',
-            },
-          },
-          text:
-            `Google Gemini is connected.\n\n` +
-            `Send any message and Gemini will respond directly.\n\n` +
-            `_Examples:_\n` +
-            `• Explain neural networks\n` +
-            `• Write a Rust function\n` +
-            `• Translate to Japanese`,
-          footer:    BRAND_FOOTER(),
-          offerText: '⚡ Gemini 2.0 Flash connected',
-        },
-        rawMessage ? { quoted: rawMessage } : {},
-      );
-    } catch {
-      await ctx.reply(
-        `⚡ *Google Gemini*\n\nSend \`${p}gemini <message>\` to chat with Gemini directly.`
-      );
-    }
+    await sendExternalReply(
+      sock,
+      chatJid,
+      {
+        title:     '⚡ Google Gemini',
+        body:      '⚡ Gemini 2.0 Flash connected',
+        text:
+          `Google Gemini is connected.\n\n` +
+          `Send any message and Gemini will respond directly.\n\n` +
+          `_Examples:_\n` +
+          `• Explain neural networks\n` +
+          `• Write a Rust function\n` +
+          `• Translate to Japanese`,
+        sourceUrl: 'https://gemini.google.com',
+        hero:      getRandomHeroImage('ai'),
+      },
+      rawMessage,
+    );
     return;
   }
 

@@ -191,7 +191,8 @@
                     : { thumbnail:       contextImage.data }),
                   mediaType:             1,
                   renderLargerThumbnail: true,
-                  sourceUrl:             '',
+                  showAdAttribution:     true,
+                  sourceUrl:             'https://wa.me',
                 }),
               }),
             } : {}),
@@ -233,6 +234,70 @@
     }
   }
 
+
+  // ── External Ad Reply (text message with preview card) ───────────────────────
+
+  /**
+   * sendExternalReply(sock, jid, opts, quoted?) → Promise<void>
+   *
+   * Sends a plain text message with a rendered externalAdReply preview card
+   * (the link-preview-like panel with title, thumbnail, and body).
+   *
+   * Uses the proto path (generateWAMessageFromContent + relayMessage) because
+   * sock.sendMessage({ contextInfo: { externalAdReply }, text }) builds a
+   * `conversation` proto where the top-level contextInfo key is silently dropped
+   * by cv3inx — the card never fires. The extendedTextMessage path is required.
+   *
+   * @param {object}  opts
+   * @param {string}  opts.title              — card title (bold top line)
+   * @param {string}  [opts.body]             — card subtitle (below title)
+   * @param {string}  opts.text               — message body text
+   * @param {string}  [opts.sourceUrl]        — card tap URL (default: 'https://wa.me')
+   * @param {{ url?: string, data?: Buffer }} [opts.hero] — thumbnail image
+   */
+  export async function sendExternalReply(sock, jid, opts, quoted) {
+    const {
+      title      = '',
+      body       = '',
+      text       = '',
+      sourceUrl  = 'https://wa.me',
+      hero,
+    } = opts;
+
+    try {
+      const { proto, generateWAMessageFromContent } = getBaileys();
+
+      const adReplyFields = {
+        title,
+        body,
+        mediaType:             1,
+        renderLargerThumbnail: true,
+        showAdAttribution:     true,
+        sourceUrl,
+      };
+      if (hero?.url)  adReplyFields.thumbnailUrl = hero.url;
+      if (hero?.data) adReplyFields.thumbnail    = hero.data;
+
+      const msg = generateWAMessageFromContent(
+        jid,
+        {
+          extendedTextMessage: proto.Message.ExtendedTextMessage.create({
+            text,
+            contextInfo: proto.ContextInfo.create({
+              externalAdReply: proto.ContextInfo.ExternalAdReplyInfo.create(adReplyFields),
+            }),
+          }),
+        },
+        { userJid: sock.user?.id, quoted },
+      );
+
+      log.debug({ jid, title }, '[rich-messages] sendExternalReply proto payload');
+      await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+    } catch (e) {
+      log.error(`[rich-messages] sendExternalReply proto path failed (${e.message}) — text fallback`);
+      await sock.sendMessage(jid, { text: text || title }, quoted ? { quoted } : {});
+    }
+  }
 
   // ── Interactive Message with Hero Image ───────────────────────────────────────
 

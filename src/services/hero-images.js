@@ -78,11 +78,11 @@ const CATEGORY_ENV = {
  * so every category has a branded hero image.
  */
 const DEFAULT_FALLBACKS = {
-  menu:       'https://www.gstatic.com/webp/gallery/1.jpg',
-  ai:         'https://www.gstatic.com/webp/gallery/2.jpg',
-  owner:      'https://www.gstatic.com/webp/gallery/3.jpg',
-  channel:    'https://www.gstatic.com/webp/gallery/4.jpg',
-  downloader: 'https://www.gstatic.com/webp/gallery/5.jpg',
+  menu:       'https://picsum.photos/id/1/720/400.jpg',
+  ai:         'https://picsum.photos/id/20/720/400.jpg',
+  owner:      'https://picsum.photos/id/42/720/400.jpg',
+  channel:    'https://picsum.photos/id/65/720/400.jpg',
+  downloader: 'https://picsum.photos/id/96/720/400.jpg',
 };
 
 /** Global fallback used when the category is unknown. */
