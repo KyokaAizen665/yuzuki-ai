@@ -10,7 +10,7 @@
  *                     Renders as native WhatsApp offer UI. Disabled when
  *                     MENU_OFFER_TEXT is unset.
  *   • 3 buttons     — AI Chat | Bot Info | Owner  (navigation via button.js)
- *   • Footer        — "Yuzuki AI • Powered by cv3inx"
+ *   • Footer        — shared BRAND_FOOTER from services/brand.js
  *
  * Detail view (.help <command>):
  *   • sendInteractive with command metadata + back/run buttons
@@ -29,9 +29,10 @@
  */
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
-import { config }                from '../config/index.js';
-import { sendInteractive, quickReply } from '../services/rich-messages.js';
-import { getHeroImage }          from '../services/ui/HeroManager.js';
+import { config }                                        from '../config/index.js';
+import { sendInteractive, quickReply }                   from '../services/rich-messages.js';
+import { getHeroImage }                                  from '../services/ui/HeroManager.js';
+import { BRAND_FOOTER }                                  from '../services/brand.js';
 
 export const meta = {
   name:        'help',
@@ -41,9 +42,6 @@ export const meta = {
   cooldown:    5,
   permission:  'public',
 };
-
-// ── Brand ─────────────────────────────────────────────────────────────────────
-const BRAND_FOOTER = 'Yuzuki AI • Powered by cv3inx';
 
 // ── Experience categories ─────────────────────────────────────────────────────
 const EXPERIENCES = [
@@ -66,16 +64,16 @@ function getGreeting(name) {
 
 // ── Category icons (detail view) ──────────────────────────────────────────────
 const CAT_ICONS = {
-  ai:          '🧠',
-  utility:     '⚙️',
-  owner:       '👑',
-  general:     '📋',
-  fun:         '🎉',
-  info:        'ℹ️',
-  tools:       '🛠️',
-  downloader:  '📥',
-  search:      '🔍',
-  media:       '🎬',
+  ai:         '🧠',
+  utility:    '⚙️',
+  owner:      '👑',
+  general:    '📋',
+  fun:        '🎉',
+  info:       'ℹ️',
+  tools:      '🛠️',
+  downloader: '📥',
+  search:     '🔍',
+  media:      '🎬',
 };
 function catIcon(cat)  { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -160,7 +158,6 @@ export async function handler(ctx) {
 
   // ── Full menu: .menu / .help ───────────────────────────────────────────────
 
-  const botName = config.botName ?? 'Yuzuki AI';
   const version = config.version ?? '2.0.0';
   const p       = config.prefix  ?? '.';
 
@@ -179,7 +176,6 @@ export async function handler(ctx) {
     quickReply('🔍 Search',   'cmd_search'),
   ];
 
-  // ── Hero image from HeroManager ───────────────────────────────────────────
   const heroImage   = getHeroImage();
   const offerFields = buildOfferFields();
 
@@ -196,7 +192,6 @@ export async function handler(ctx) {
       rawMessage ? { quoted: rawMessage } : {},
     );
   } catch {
-    // Plain-text fallback — menu never goes silent
     const lines = [
       `╭──────────────────╮`,
       `  🌸 ʏᴜᴢᴜᴋɪ ᴀɪ  ${version}`,
