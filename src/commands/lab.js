@@ -24,6 +24,7 @@
  *   contact      — contactMessage / vCard as info card
  *   location     — locationMessage pin as decorative header
  *   order        — orderMessage (items as command entries)
+ *   ordermenu    — orderMessage banner → image + NativeFlow buttons (dev pattern)
  *   storefront   — shopStorefrontMessage commerce card
  *   all          — every type in sequence
  */
@@ -127,6 +128,11 @@ const TESTS = {
     label: 'Order Message',
     desc:  'orderTitle = bold, message = dim — itemCount as secondary text',
   },
+  ordermenu: {
+    icon:  '🛒🖼️',
+    label: 'Order Banner → Image + Buttons (dev pattern)',
+    desc:  'orderMessage as visual header, then hero image + NativeFlow buttons — how other bots attach it to .menu',
+  },
   storefront: {
     icon:  '🏪',
     label: 'Shop Storefront',
@@ -174,9 +180,9 @@ async function sendLabMenu(ctx) {
     body:    `Compare how every WA message type renders as a menu.\n\n${lines}`,
     footer:  FOOT,
     buttons: [
-      quickReply('🚀 Run All',     'lab_all'),
-      quickReply('📋 List Types',  'lab_list'),
-      quickReply('📦 Product Demo','lab_product'),
+      quickReply('🚀 Run All',       'lab_all'),
+      quickReply('📋 List Types',    'lab_list'),
+      quickReply('🛒🖼️ Order Menu',  'lab_ordermenu'),
     ],
   }, rawMessage);
 }
@@ -387,7 +393,129 @@ const runners = {
     }
   },
 
-  // 11. shopStorefrontMessage commerce card
+  // 11. orderMessage banner → image + NativeFlow buttons  (the dev pattern)
+  //
+  //  This is the layout many bot devs use when attaching an order message to .menu:
+  //
+  //  Part 1: orderMessage — fully populated so every visible field renders.
+  //    orderTitle  → BOLD headline on the card          e.g. "🤖 Yuzuki AI"
+  //    message     → dim grey subtitle below the title   e.g. category listing
+  //    itemCount   → secondary badge                     e.g. "5 items"
+  //    status      → 1 = PENDING (standard display state)
+  //    surface     → 1 = CATALOG surface
+  //    thumbnail   → base64-encoded 100×100 JPEG fed into ImageMessage
+  //                  (gives the order card its own small preview image)
+  //    sellerJid   → owner JID — required for the card to attribute correctly
+  //    token       → opaque string, used by WA to link back to the catalog entry
+  //
+  //  400 ms pause — lets WA deliver and render the order card before the
+  //  menu card arrives, so they stack visually as two separate bubbles.
+  //
+  //  Part 2: sendInteractive with contextImage.
+  //    Hero image fills the NativeFlow card header,
+  //    MENU_BODY fills the body, MENU_BUTTONS appear below.
+  //
+  //  Net effect in the chat:
+  //    ┌─────────────────────────────┐
+  //    │  🛒  🤖 Yuzuki AI   [bold] │  ← orderMessage banner
+  //    │  AI · Download · Search…   │  ← dim grey
+  //    │  5 items                   │  ← badge
+  //    └─────────────────────────────┘
+  //    ┌─────────────────────────────┐
+  //    │  [hero image]               │  ← interactive card
+  //    │  🤖 Yuzuki AI               │
+  //    │  Choose a category…         │
+  //    │  [AI Chat] [Download] [🔍]  │  ← NativeFlow buttons
+  //    └─────────────────────────────┘
+  async ordermenu(ctx) {
+    const { sock, chat: jid, rawMessage } = ctx;
+
+    await sock.sendMessage(jid, {
+      text:
+        '_🛒🖼️ *ordermenu* — orderMessage banner + image + NativeFlow buttons\n' +
+        'orderMessage fires first as the visual header (bold title, dim grey text,\n' +
+        'item count badge, thumbnail), then the menu card with image + buttons drops below.\n' +
+        "This is how other bot devs attach order messages to their .menu._",
+    }).catch(() => {});
+
+    const { proto, generateWAMessageFromContent } = getBaileys();
+    const ownerJid = sock.user?.id ?? `${config.ownerNumber ?? '0'}@s.whatsapp.net`;
+
+    // ── Part 1: orderMessage — the header banner ──────────────────────────────
+    //
+    // Populate every visible field so the card renders fully:
+    //   orderTitle  — bold headline
+    //   message     — dim grey subtitle (plain text, no markdown)
+    //   itemCount   — rendered as "N items" badge on the card
+    //   status      — 1 = PENDING (normal non-error state)
+    //   surface     — 1 = CATALOG
+    //   sellerJid   — attributes the card to this bot's JID
+    //   token       — opaque reference token; not shown to user
+    //   thumbnail   — 1×1 transparent GIF as a minimal placeholder so the
+    //                 imageMessage field is present; swap for a real JPEG
+    //                 buffer (100×100) to show a proper thumbnail image.
+
+    // Minimal 1×1 transparent GIF — keeps the thumbnail field non-null
+    // without requiring an external image download during the lab test.
+    // Replace with a real image buffer for production menus.
+    const BLANK_GIF = Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      'base64',
+    );
+
+    try {
+      const thumbnailMsg = proto.Message.ImageMessage.create({
+        url:           '',
+        mimetype:      'image/gif',
+        fileSha256:    Buffer.alloc(32),
+        fileLength:    BigInt(BLANK_GIF.length),
+        height:        1,
+        width:         1,
+        jpegThumbnail: BLANK_GIF,
+      });
+
+      const orderMsg = generateWAMessageFromContent(
+        jid,
+        {
+          orderMessage: proto.Message.OrderMessage.create({
+            orderId:    'lab_ordermenu_banner',
+            token:      'yuzuki_menu_v2',
+            itemCount:  5,
+            status:     proto.Message.OrderMessage.OrderStatus?.INQUIRY ?? 1,
+            surface:    proto.Message.OrderMessage.OrderSurface?.CATALOG ?? 1,
+            message:    `AI · Download · Search · Fun · Info\nSend ${P}help to explore all commands.`,
+            orderTitle: MENU_TITLE,
+            sellerJid:  ownerJid,
+            thumbnail:  thumbnailMsg,
+          }),
+        },
+        { userJid: sock.user?.id },
+      );
+      await sock.relayMessage(jid, orderMsg.message, { messageId: orderMsg.key.id });
+    } catch (e) {
+      log.warn(`[lab] ordermenu: banner failed (${e.message})`);
+      // Fall through — still send the menu card below even if the banner failed
+      await sock.sendMessage(jid, { text: `⚠️ Order banner failed: ${e.message}` }).catch(() => {});
+    }
+
+    // Short pause — lets WA render the order card before the menu card arrives
+    await new Promise(r => setTimeout(r, 400));
+
+    // ── Part 2: image + caption + NativeFlow buttons ──────────────────────────
+    const hero = getRandomHeroImage('menu')
+              ?? getRandomHeroImage('ai')
+              ?? { url: 'https://picsum.photos/720/400.jpg' };
+
+    return sendInteractive(sock, jid, {
+      contextImage: hero,
+      header:       MENU_TITLE,
+      body:         MENU_BODY,
+      footer:       FOOT,
+      buttons:      MENU_BUTTONS,
+    }, rawMessage);
+  },
+
+  // 12. shopStorefrontMessage commerce card
   async storefront(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, {
@@ -399,7 +527,7 @@ const runners = {
 
   // ── Rendering tricks ────────────────────────────────────────────────────────
 
-  // 12. sendCode — markdown triple-backtick code block
+  // 13. sendCode — markdown triple-backtick code block
   async code(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, { text: '_💻 *code* — sendCode() — WA markdown triple-backtick block_' }).catch(() => {});
@@ -415,7 +543,7 @@ const runners = {
     return sendCode(sock, jid, sample, 'javascript', rawMessage);
   },
 
-  // 13. sendNativeAIResponse — cv3inx rich CODE renderer
+  // 14. sendNativeAIResponse — cv3inx rich CODE renderer
   async nativecode(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, {
@@ -439,7 +567,7 @@ const runners = {
     }, rawMessage);
   },
 
-  // 14. sendTable — cv3inx native TABLE (GenATableUXPrimitive)
+  // 15. sendTable — cv3inx native TABLE (GenATableUXPrimitive)
   async table(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, {
@@ -463,7 +591,7 @@ const runners = {
     );
   },
 
-  // 15. sendCitation
+  // 16. sendCitation
   async citation(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, { text: '_📎 *citation* — sendCitation() — source attribution card_' }).catch(() => {});
@@ -476,7 +604,7 @@ const runners = {
     }, rawMessage);
   },
 
-  // 16. sendAIRichResponse — full combined AI card
+  // 17. sendAIRichResponse — full combined AI card
   async richresponse(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
     await sock.sendMessage(jid, {
@@ -520,7 +648,7 @@ const runners = {
   async all(ctx) {
     const { sock, chat: jid } = ctx;
     const delay = ms => new Promise(r => setTimeout(r, ms));
-    const order = ['interactive','image','carousel','list','template','product','text','contact','location','order','storefront','code','nativecode','table','citation','richresponse'];
+    const order = ['interactive','image','carousel','list','template','product','text','contact','location','order','ordermenu','storefront','code','nativecode','table','citation','richresponse'];
 
     await sock.sendMessage(jid, {
       text:
