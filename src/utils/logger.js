@@ -32,3 +32,18 @@ export function printBanner({ version, nodeVersion, pluginCount }) {
     '\n  ╚══════════════════════════════════════════╝\n',
   ));
 }
+
+// ── Baileys-compatible silent logger ─────────────────────────────────────────
+// Baileys expects a pino-shaped logger. We keep it silent to avoid flooding
+// the console with protocol-level noise; real bot events go through `log`.
+const _noop = () => {};
+export const pinoLogger = {
+  level: 'silent',
+  trace: _noop,
+  debug: _noop,
+  info:  _noop,
+  warn:  m => log.warn(`[baileys] ${typeof m === 'object' ? JSON.stringify(m) : m}`),
+  error: m => log.error(`[baileys] ${typeof m === 'object' ? JSON.stringify(m) : m}`),
+  fatal: m => log.error(`[baileys] FATAL ${typeof m === 'object' ? JSON.stringify(m) : m}`),
+  child() { return this; },
+};
