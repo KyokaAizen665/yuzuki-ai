@@ -52,12 +52,6 @@ export function validateStartup(cfg) {
     );
   }
 
-  // ── Database directory ────────────────────────────────────────────────────
-  const dbDir = path.dirname(path.resolve(cfg.dbPath));
-  if (!fs.existsSync(dbDir)) {
-    issue(issues, `Database directory does not exist: ${dbDir} — create it or set DB_PATH to a writable path`);
-  }
-
   // ── AI providers (optional but useful) ────────────────────────────────────
   if (!cfg.groqApiKey && !cfg.geminiApiKey && !cfg.openrouterApiKey) {
     warn(warnings,
