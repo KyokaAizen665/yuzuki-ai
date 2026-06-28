@@ -6,6 +6,9 @@
  *     output path. No direct sendNativeAIResponse calls for response content.
  *   • Latency tracked at command level and included in response card.
  *   • Error cards and info cards unchanged (not AI response content).
+ *   • No-args info card: replaced box-drawing sendExternalReply with
+ *     sendInteractive (consistent with the no-ASCII-art policy).
+ *   • BRAND_FOOTER: imported from services/brand.js (single source of truth).
  *
  * Google Gemini dedicated interface.
  * Forces the Gemini provider for every call.
@@ -20,15 +23,16 @@ import {
   initAI,
   AIManager,
 } from '../services/ai.js';
-import { aiRateLimiter }     from '../services/rate-limiter.js';
-import { config }            from '../config/index.js';
+import { aiRateLimiter }      from '../services/rate-limiter.js';
+import { config }             from '../config/index.js';
 import {
+  sendInteractive,
   sendReaction,
   quickReply,
-  sendExternalReply,
-}                            from '../services/rich-messages.js';
+}                             from '../services/rich-messages.js';
 import { getRandomHeroImage } from '../services/hero-images.js';
 import { renderAIResponse }   from '../services/ai-renderer.js';
+import { BRAND_FOOTER }       from '../services/brand.js';
 
 export const meta = {
   name:        'gemini',
@@ -38,8 +42,6 @@ export const meta = {
   cooldown:    4,
   permission:  'public',
 };
-
-const BRAND_FOOTER = () => `Yuzuki AI • Google Gemini`;
 
 export async function handler(ctx) {
   const { args, chat: chatJid, sender, pushName, isOwner, sock, rawMessage } = ctx;
@@ -58,7 +60,7 @@ export async function handler(ctx) {
         `2. Set GEMINI_API_KEY in your .env file\n` +
         `3. Restart the bot\n\n` +
         `_AI is still available via the fallback provider._`,
-      footer:  BRAND_FOOTER(),
+      footer:  BRAND_FOOTER,
       buttons: [
         quickReply('🤖 Use AI instead', 'cmd_ai'   ),
         quickReply('📊 Check Status',   'ai_status'),
@@ -72,25 +74,19 @@ export async function handler(ctx) {
   if (!prompt) {
     const p = config.prefix;
 
-    await sendExternalReply(
-      sock,
-      chatJid,
-      {
-        title:     '⚡ Google Gemini',
-        body:      'ɢᴇᴍɪɴɪ 2.0 ꜰʟᴀsʜ',
-        text:
-          `╭─────────────────╮\n` +
-          `  ⚡ ɢᴏᴏɢʟᴇ ɢᴇᴍɪɴɪ\n` +
-          `╰─────────────────╯\n\n` +
-          `ɢᴇᴍɪɴɪ 2.0 ꜰʟᴀsʜ ɪs ʀᴇᴀᴅʏ.\n\n` +
-          `▸ \`${p}gemini <message>\`\n` +
-          `▸ ᴇxᴘʟᴀɪɴ  ·  ᴛʀᴀɴsʟᴀᴛᴇ  ·  ᴅᴇʙᴜɢ`,
-        sourceUrl: 'https://gemini.google.com',
-        hero:      getRandomHeroImage('ai'),
-      },
-      rawMessage,
-    );
-    return;
+    return sendInteractive(sock, chatJid, {
+      header:       '⚡ Google Gemini',
+      contextImage: getRandomHeroImage('ai'),
+      body:
+        `ɢᴇᴍɪɴɪ 2.0 ꜰʟᴀsʜ ɪs ʀᴇᴀᴅʏ.\n\n` +
+        `▸ \`${p}gemini <message>\`\n` +
+        `▸ ᴇxᴘʟᴀɪɴ  ·  ᴛʀᴀɴsʟᴀᴛᴇ  ·  ᴅᴇʙᴜɢ`,
+      footer:  BRAND_FOOTER,
+      buttons: [
+        quickReply('🤖 Try AI Chat',  'cmd_ai'   ),
+        quickReply('📊 Check Status', 'ai_status'),
+      ],
+    }, rawMessage);
   }
 
   // ── Chat flow: force Gemini ───────────────────────────────────────────────
@@ -120,7 +116,7 @@ export async function handler(ctx) {
       header:       '⚠️ Gemini Unavailable',
       contextImage: getRandomHeroImage('ai'),
       body:    `Gemini could not respond at this time.\n\n_${err.message}_\n\nUse the main AI command which falls back automatically.`,
-      footer:  BRAND_FOOTER(),
+      footer:  BRAND_FOOTER,
       buttons: [
         quickReply('🤖 Use AI instead', 'cmd_ai'   ),
         quickReply('← Menu',           'back_menu'),
