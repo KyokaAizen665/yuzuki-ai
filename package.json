@@ -1,15 +1,21 @@
 {
-  "name": "@workspace/scripts",
-  "version": "0.0.0",
-  "private": true,
+  "name": "yuzuki-ai",
+  "version": "2.0.0",
+  "description": "Production-ready WhatsApp Multi-Device Bot",
+  "main": "index.js",
   "type": "module",
   "scripts": {
-    "hello": "tsx ./src/hello.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "gh-push": "node ./src/gh-push.js"
+    "start": "node --experimental-sqlite index.js",
+    "dev":   "node --watch --experimental-sqlite index.js",
+    "debug": "DEBUG=true node --experimental-sqlite index.js"
   },
-  "devDependencies": {
-    "@types/node": "catalog:",
-    "tsx": "catalog:"
+  "engines": { "node": ">=22.5.0" },
+  "dependencies": {
+    "baileys": "npm:@itsliaaa/baileys@^0.3.18-final",
+    "axios":   "^1.7.9",
+    "chalk":   "^5.3.0",
+    "dotenv":  "^16.4.5",
+    "groq-sdk": "^0.7.0",
+    "sharp":   "^0.33.5"
   }
 }
