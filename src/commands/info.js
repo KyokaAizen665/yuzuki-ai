@@ -17,6 +17,7 @@ import {
   quickReply,
 }                          from '../services/rich-messages.js';
 import { renderTable }     from '../services/table-renderer.js';
+import { BRAND_FOOTER }    from '../services/brand.js';
 
 export const meta = {
   name:        'info',
@@ -26,8 +27,6 @@ export const meta = {
   cooldown:    5,
   permission:  'public',
 };
-
-const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';
 
 export async function handler(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
@@ -57,7 +56,6 @@ export async function handler(ctx) {
     footer: BRAND_FOOTER,
   });
 
-  // CTA interactive card with owner contact
   const ownerNum = config.ownerNumber;
   const ctaBtns  = [quickReply('📋 Commands', 'open_menu')];
   if (ownerNum) ctaBtns.unshift(ctaCall('📞 Contact Owner', `+${ownerNum}`));
