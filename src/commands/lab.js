@@ -393,126 +393,84 @@ const runners = {
     }
   },
 
-  // 11. orderMessage banner → image + NativeFlow buttons  (the dev pattern)
+  // 11. orderMessage — single card, all fields populated  (the dev pattern)
   //
-  //  This is the layout many bot devs use when attaching an order message to .menu:
+  //  cv3inx exposes a high-level `orderText` key on sock.sendMessage() that
+  //  builds a proper orderMessage proto internally. The thumbnail field on
+  //  OrderMessage is raw JPEG bytes (a Buffer) — NOT an ImageMessage proto.
+  //  Passing the wrong type causes a silent blank card or a Boom 400 error.
   //
-  //  Part 1: orderMessage — fully populated so every visible field renders.
-  //    orderTitle  → BOLD headline on the card          e.g. "🤖 Yuzuki AI"
-  //    message     → dim grey subtitle below the title   e.g. category listing
-  //    itemCount   → secondary badge                     e.g. "5 items"
-  //    status      → 1 = PENDING (standard display state)
-  //    surface     → 1 = CATALOG surface
-  //    thumbnail   → base64-encoded 100×100 JPEG fed into ImageMessage
-  //                  (gives the order card its own small preview image)
-  //    sellerJid   → owner JID — required for the card to attribute correctly
-  //    token       → opaque string, used by WA to link back to the catalog entry
+  //  What WA renders on the card:
+  //    thumbnail        → small image preview on the left of the card
+  //    orderTitle       → BOLD headline
+  //    orderText/message → dim grey subtitle
+  //    itemCount        → "N items" secondary badge
+  //    totalAmount1000  → price display (0 = free / suppressed)
   //
-  //  400 ms pause — lets WA deliver and render the order card before the
-  //  menu card arrives, so they stack visually as two separate bubbles.
-  //
-  //  Part 2: sendInteractive with contextImage.
-  //    Hero image fills the NativeFlow card header,
-  //    MENU_BODY fills the body, MENU_BUTTONS appear below.
-  //
-  //  Net effect in the chat:
-  //    ┌─────────────────────────────┐
-  //    │  🛒  🤖 Yuzuki AI   [bold] │  ← orderMessage banner
-  //    │  AI · Download · Search…   │  ← dim grey
-  //    │  5 items                   │  ← badge
-  //    └─────────────────────────────┘
-  //    ┌─────────────────────────────┐
-  //    │  [hero image]               │  ← interactive card
-  //    │  🤖 Yuzuki AI               │
-  //    │  Choose a category…         │
-  //    │  [AI Chat] [Download] [🔍]  │  ← NativeFlow buttons
-  //    └─────────────────────────────┘
+  //  NativeFlow buttons CANNOT be combined with orderMessage — they are
+  //  separate top-level proto.Message oneofs. Adding buttons here would
+  //  silently drop one or the other. No buttons on this card.
   async ordermenu(ctx) {
     const { sock, chat: jid, rawMessage } = ctx;
+    const { proto } = getBaileys();
+    const ownerJid = sock.user?.id ?? `${config.ownerNumber ?? '0'}@s.whatsapp.net`;
 
     await sock.sendMessage(jid, {
       text:
-        '_🛒🖼️ *ordermenu* — orderMessage banner + image + NativeFlow buttons\n' +
-        'orderMessage fires first as the visual header (bold title, dim grey text,\n' +
-        'item count badge, thumbnail), then the menu card with image + buttons drops below.\n' +
-        "This is how other bot devs attach order messages to their .menu._",
+        '_🛒🖼️ *ordermenu* — single orderMessage, all fields populated\n' +
+        'thumbnail = real JPEG buffer · orderTitle = bold · message = dim grey · itemCount badge.\n' +
+        'NativeFlow buttons cannot coexist with orderMessage (separate proto oneofs) — no buttons._',
     }).catch(() => {});
 
-    const { proto, generateWAMessageFromContent } = getBaileys();
-    const ownerJid = sock.user?.id ?? `${config.ownerNumber ?? '0'}@s.whatsapp.net`;
-
-    // ── Part 1: orderMessage — the header banner ──────────────────────────────
-    //
-    // Populate every visible field so the card renders fully:
-    //   orderTitle  — bold headline
-    //   message     — dim grey subtitle (plain text, no markdown)
-    //   itemCount   — rendered as "N items" badge on the card
-    //   status      — 1 = PENDING (normal non-error state)
-    //   surface     — 1 = CATALOG
-    //   sellerJid   — attributes the card to this bot's JID
-    //   token       — opaque reference token; not shown to user
-    //   thumbnail   — 1×1 transparent GIF as a minimal placeholder so the
-    //                 imageMessage field is present; swap for a real JPEG
-    //                 buffer (100×100) to show a proper thumbnail image.
-
-    // Minimal 1×1 transparent GIF — keeps the thumbnail field non-null
-    // without requiring an external image download during the lab test.
-    // Replace with a real image buffer for production menus.
-    const BLANK_GIF = Buffer.from(
-      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
-      'base64',
-    );
-
+    // ── Thumbnail — must be a raw JPEG Buffer, not an ImageMessage proto ───────
+    // Fetch the hero image bytes. Fall back to a minimal valid 1×1 white JPEG
+    // if the fetch fails so the card still renders with a placeholder.
+    let thumbnail;
+    const hero = getRandomHeroImage('menu') ?? getRandomHeroImage('ai');
+    const thumbUrl = (typeof hero?.url === 'string' ? hero.url : null)
+                  ?? 'https://picsum.photos/100/100';
     try {
-      const thumbnailMsg = proto.Message.ImageMessage.create({
-        url:           '',
-        mimetype:      'image/gif',
-        fileSha256:    Buffer.alloc(32),
-        fileLength:    BigInt(BLANK_GIF.length),
-        height:        1,
-        width:         1,
-        jpegThumbnail: BLANK_GIF,
-      });
-
-      const orderMsg = generateWAMessageFromContent(
-        jid,
-        {
-          orderMessage: proto.Message.OrderMessage.create({
-            orderId:    'lab_ordermenu_banner',
-            token:      'yuzuki_menu_v2',
-            itemCount:  5,
-            status:     proto.Message.OrderMessage.OrderStatus?.INQUIRY ?? 1,
-            surface:    proto.Message.OrderMessage.OrderSurface?.CATALOG ?? 1,
-            message:    `AI · Download · Search · Fun · Info\nSend ${P}help to explore all commands.`,
-            orderTitle: MENU_TITLE,
-            sellerJid:  ownerJid,
-            thumbnail:  thumbnailMsg,
-          }),
-        },
-        { userJid: sock.user?.id },
-      );
-      await sock.relayMessage(jid, orderMsg.message, { messageId: orderMsg.key.id });
+      const res = await fetch(thumbUrl, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      thumbnail = Buffer.from(await res.arrayBuffer());
     } catch (e) {
-      log.warn(`[lab] ordermenu: banner failed (${e.message})`);
-      // Fall through — still send the menu card below even if the banner failed
-      await sock.sendMessage(jid, { text: `⚠️ Order banner failed: ${e.message}` }).catch(() => {});
+      log.warn(`[lab] ordermenu: thumbnail fetch failed (${e.message}) — using 1×1 fallback`);
+      // Smallest valid JPEG (1×1 white pixel)
+      thumbnail = Buffer.from(
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDB' +
+        'QNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5' +
+        'PTgyPC4zNDL/wAARC AABAAEDAS IAAhEBAxEB/8QAFgABAQEAAAAAAAAA' +
+        'AAAAAAAABgUE/8QAIRAAAQQCAgMBAAAAAAAAAAAAAQIDBAUREiExQVH/' +
+        'xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/' +
+        'aAAwDAQACEQMRAD8Ak2lrWtS1UOnYrjUccji2Jr2NY5wHJcSTyeulKAP/2Q==',
+        'base64',
+      );
     }
 
-    // Short pause — lets WA render the order card before the menu card arrives
-    await new Promise(r => setTimeout(r, 400));
-
-    // ── Part 2: image + caption + NativeFlow buttons ──────────────────────────
-    const hero = getRandomHeroImage('menu')
-              ?? getRandomHeroImage('ai')
-              ?? { url: 'https://picsum.photos/720/400.jpg' };
-
-    return sendInteractive(sock, jid, {
-      contextImage: hero,
-      header:       MENU_TITLE,
-      body:         MENU_BODY,
-      footer:       FOOT,
-      buttons:      MENU_BUTTONS,
-    }, rawMessage);
+    // ── Send — using cv3inx high-level orderText API ───────────────────────────
+    try {
+      await sock.sendMessage(
+        jid,
+        {
+          orderText:         `AI · Download · Search · Fun · Info\nSend ${P}help to explore all features.`,
+          thumbnail,
+          orderTitle:        MENU_TITLE,
+          itemCount:         5,
+          totalAmount1000:   0,
+          totalCurrencyCode: 'USD',
+          sellerJid:         ownerJid,
+          token:             'yuzuki_menu_v2',
+          messageVersion:    1,
+          orderId:           'lab_ordermenu_001',
+          status:            proto.Message.OrderMessage.OrderStatus?.INQUIRY   ?? 1,
+          surface:           proto.Message.OrderMessage.OrderSurface?.CATALOG  ?? 1,
+        },
+        rawMessage ? { quoted: rawMessage } : {},
+      );
+    } catch (e) {
+      log.error(`[lab] ordermenu failed: ${e.message}`);
+      await ctx.reply(`⚠️ ordermenu failed:\n${e.message}`);
+    }
   },
 
   // 12. shopStorefrontMessage commerce card
