@@ -2,17 +2,17 @@
 /**
  * Yuzuki AI — Entry point
  *
- * Phase 7 hardened startup sequence:
+ * Startup sequence:
  *   1. Config validation (warn/error before anything starts)
  *   2. Directory setup
- *   3. Database init + integrity check
- *   4. Auth state setup
+ *   3. Database init + integrity check (store only — auth uses session folder)
+ *   4. Auth state setup (multi-file, session folder)
  *   5. Plugin load
  *   6. Banner
  *   7. Connection manager + socket
- *   8. Health server (enhanced diagnostics)
+ *   8. Health server
  *   9. Graceful shutdown (DB close + WAL checkpoint)
- *  10. Global error safety nets (log stack traces, never silently crash)
+ *  10. Global error safety nets
  */
 import http from 'http';
 import { config }            from './src/config/index.js';
@@ -24,7 +24,7 @@ import {
   checkIntegrity,
   closeDatabase,
 }                            from './src/database/index.js';
-import { useSQLiteAuthState } from './src/database/auth.js';
+import { useMultiFileAuth }  from './src/database/auth.js';
 import { getBaileysVersion }  from './src/core/socket.js';
 import {
   initConnectionManager,
@@ -66,7 +66,7 @@ async function main() {
   ensureDir(config.tempDir);
   ensureDir(config.logsDir);
 
-  // ── 3. Database ───────────────────────────────────────────────────────────
+  // ── 3. Database (store only) ──────────────────────────────────────────────
   initDatabase(config.dbPath);
 
   const integrity = checkIntegrity();
@@ -77,8 +77,8 @@ async function main() {
     log.db('[db] Integrity check passed');
   }
 
-  // ── 4. Auth ───────────────────────────────────────────────────────────────
-  const { state: authState, saveCreds, clearCreds } = useSQLiteAuthState(config.dbPath);
+  // ── 4. Auth (multi-file session folder) ───────────────────────────────────
+  const { state: authState, saveCreds, clearCreds } = await useMultiFileAuth(config.sessionDir);
 
   // ── 5. Baileys version ────────────────────────────────────────────────────
   const version = await getBaileysVersion();
@@ -101,7 +101,6 @@ async function main() {
         registerEvents(sock);
       } catch (e) {
         log.error(`[boot] Failed to register events: ${e.message}`);
-        // Non-fatal: socket is open but events are partially registered
       }
     },
   });
@@ -112,14 +111,12 @@ async function main() {
   if (config.port > 0) {
     const srv = http.createServer((req, res) => {
       try {
-        // GET /health/summary → one-line text (for simple uptime monitors)
         if (req.url === '/health/summary') {
           res.writeHead(200, { 'Content-Type': 'text/plain' });
           res.end(getHealthSummary());
           return;
         }
 
-        // GET / or /health → full JSON diagnostics
         const health = getHealth();
         const statusCode = health.connection.connected ? 200 : 503;
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -149,7 +146,6 @@ async function main() {
   process.on('uncaughtException', (e) => {
     log.error(`[boot] uncaughtException: ${e.message}`);
     if (config.debug) log.debug(`[boot] Stack: ${e.stack}`);
-    // Don't exit — the bot stays up and tries to recover
   });
 
   process.on('unhandledRejection', (reason) => {
