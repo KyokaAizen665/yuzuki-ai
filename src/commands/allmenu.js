@@ -7,6 +7,7 @@
 import { getByCategory, getCategoryNames } from '../plugins/registry.js';
 import { config }                          from '../config/index.js';
 import { sendInteractive, quickReply }     from '../services/rich-messages.js';
+import { BRAND_FOOTER }                    from '../services/brand.js';
 
 export const meta = {
   name:        'allmenu',
@@ -16,8 +17,6 @@ export const meta = {
   cooldown:    5,
   permission:  'public',
 };
-
-const BRAND_FOOTER = 'Yuzuki AI • Powered by cv3inx';
 
 const CAT_ICONS = {
   ai:         '🧠',
@@ -45,14 +44,12 @@ const SC_CATS = {
 
 function catIcon(cat) { return CAT_ICONS[cat?.toLowerCase()] ?? '📂'; }
 function scCat(cat)   { return SC_CATS[cat?.toLowerCase()] ?? cat; }
-function cap(s)       { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 export async function handler(ctx) {
   const { sock, chat: jid, rawMessage } = ctx;
   const p    = config.prefix;
   const cats = getCategoryNames();
 
-  // Build compact command list — names + aliases, no descriptions
   const sections = cats.map(cat => {
     const entries = getByCategory(cat);
     if (!entries.length) return null;
@@ -69,15 +66,12 @@ export async function handler(ctx) {
   const bodyText = sections.join('\n\n');
   const header   = `◆ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs  (${total})`;
 
-  // Buttons use quickReply() so paramsJson is properly encoded.
-  // button.js routes cmd_ai → .ai, cmd_dl → .dl, cmd_search → .search
   const navButtons = [
     quickReply('🧠 AI Chat',  'cmd_ai'),
     quickReply('📥 Download', 'cmd_dl'),
     quickReply('🔍 Search',   'cmd_search'),
   ];
 
-  // WhatsApp caps interactive body at ~4000 chars — split if needed
   const MAX = 3800;
   if (bodyText.length <= MAX) {
     return sendInteractive(sock, jid, {
