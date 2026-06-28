@@ -13,10 +13,11 @@
  *
  * Nothing in this file throws to its caller. All errors are caught and logged.
  */
-import { log }         from '../utils/logger.js';
-import { findCommand } from '../plugins/registry.js';
-import { config }      from '../config/index.js';
-import { incrementStat } from '../database/store.js';
+import { createRequire }  from 'module';
+import { log }            from '../utils/logger.js';
+import { findCommand }    from '../plugins/registry.js';
+import { config }         from '../config/index.js';
+import { incrementStat }  from '../database/store.js';
 import {
   checkPermission,
   checkCooldown,
@@ -25,6 +26,10 @@ import {
   isPremium,
 } from './permissions.js';
 import { renderPermissionDenied } from '../services/permission-denied.js';
+
+// ── Baileys require helper ────────────────────────────────────────────────────
+// Resolved once at module load — avoids dynamic await import inside sync arrow fns.
+const _req2 = createRequire(import.meta.url);
 
 // ── Level resolver (mirrors permissions.js resolveLevel — no circular import) ──
 
@@ -90,7 +95,6 @@ function buildCmdCtx(sock, ctx, resolvedName, args) {
     /** Reply quoting the triggering message — includes externalAdReply branding */
     reply: (text, opts = {}) => {
       try {
-        const _req2 = (await import('module')).createRequire(import.meta.url);
         const { proto, generateWAMessageFromContent } =
           (() => { try { return _req2('baileys'); } catch { return null; } })() ?? {};
         if (proto && generateWAMessageFromContent) {
