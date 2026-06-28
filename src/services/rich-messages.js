@@ -779,37 +779,90 @@
   // ── Carousel (proto-level) ────────────────────────────────────────────────────
 
   /**
+   * _downloadImageBuffer(url) → Promise<Buffer>
+   * Fetch an image from any public URL and return a raw Buffer.
+   * Used by sendCarousel to upload images to WhatsApp's CDN before embedding.
+   */
+  async function _downloadImageBuffer(url) {
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Yuzuki-AI/2.0)' },
+      signal:  AbortSignal.timeout(20_000),
+      redirect: 'follow',
+    });
+    if (!r.ok) throw new Error(`Image fetch ${r.status}: ${url}`);
+    const ab = await r.arrayBuffer();
+    if (!ab.byteLength) throw new Error('Empty image response');
+    return Buffer.from(ab);
+  }
+
+  /**
    * sendCarousel(sock, jid, opts, quoted?) → Promise<void>
    *
-   * Multi-card carousel. Uses generateWAMessageFromContent + relayMessage.
-   * Falls back to a numbered text list if proto construction fails.
+   * Multi-card carousel. Images are downloaded and uploaded to WhatsApp's CDN
+   * via prepareWAMessageMedia so each card renders correctly on all clients.
+   * Without proper CDN upload WhatsApp shows "you received a message that your
+   * version of WhatsApp can't display" — bare public URLs won't work.
+   *
+   * Falls back to a numbered sendInteractive text list when proto path fails.
    *
    * @param {object} opts
-   * @param {string}  opts.body    — body text shown above carousel
-   * @param {Array}   opts.cards   — [{ header?, imageUrl?, body, footer?, buttons }]
+   * @param {string}  opts.body    — body text shown above the carousel
+   * @param {Array}   opts.cards   — [{
+   *   header?:      string        — text header (used when no image)
+   *   imageUrl?:    string        — public URL — downloaded + uploaded to WA CDN
+   *   imageBuffer?: Buffer        — raw image bytes — uploaded to WA CDN directly
+   *   body:         string        — card body text (required)
+   *   footer?:      string        — card footer
+   *   buttons:      NativeFlowButton[]
+   * }]
    */
   export async function sendCarousel(sock, jid, opts, quoted) {
     const { body, cards = [] } = opts;
     if (!cards.length) throw new Error('[rich-messages] sendCarousel requires at least 1 card');
 
     try {
-      const { proto, generateWAMessageFromContent } = getBaileys();
+      const { proto, generateWAMessageFromContent, prepareWAMessageMedia } = getBaileys();
 
-      const protoCards = cards.map(card => {
-        const headerObj = card.imageUrl
-          ? {
+      // Upload all card images to WA CDN in parallel so the carousel renders
+      const protoCards = await Promise.all(cards.map(async card => {
+        let headerObj = { hasMediaAttachment: false, title: card.header ?? '' };
+
+        const rawBuf = card.imageBuffer
+          ?? (card.imageUrl ? await _downloadImageBuffer(card.imageUrl).catch(e => {
+              log.warn(`[carousel] image download failed (${e.message}) — text header`);
+              return null;
+            }) : null);
+
+        if (rawBuf) {
+          try {
+            const uploaded = await prepareWAMessageMedia(
+              { image: rawBuf },
+              { upload: sock.waUploadToServer },
+            );
+            // prepareWAMessageMedia returns { imageMessage: { url, mediaKey, fileSha256, … } }
+            const im = uploaded.imageMessage ?? uploaded;
+            headerObj = {
               hasMediaAttachment: true,
               imageMessage: proto.Message.ImageMessage.create({
-                url:        card.imageUrl,
-                mimetype:   'image/jpeg',
-                fileLength: 0,   // prevent undefined uint64 → NaN → Buffer.alloc(NaN) crash
+                url:             im.url             ?? '',
+                directPath:      im.directPath       ?? '',
+                mediaKey:        im.mediaKey         ?? Buffer.alloc(0),
+                fileEncSha256:   im.fileEncSha256    ?? Buffer.alloc(0),
+                fileSha256:      im.fileSha256        ?? Buffer.alloc(0),
+                fileLength:      im.fileLength        ?? rawBuf.length,
+                mimetype:        im.mimetype          ?? 'image/jpeg',
+                height:          im.height            ?? 300,
+                width:           im.width             ?? 300,
               }),
-            }
-          : { hasMediaAttachment: false, title: card.header ?? '' };
+            };
+          } catch (uploadErr) {
+            log.warn(`[carousel] WA CDN upload failed (${uploadErr.message}) — text header`);
+          }
+        }
 
         return proto.Message.InteractiveMessage.create({
           header: proto.Message.InteractiveMessage.Header.create(headerObj),
-          body:   proto.Message.InteractiveMessage.Body.create({ text: card.body }),
+          body:   proto.Message.InteractiveMessage.Body.create({ text: card.body ?? '' }),
           ...(card.footer
             ? { footer: proto.Message.InteractiveMessage.Footer.create({ text: card.footer }) }
             : {}),
@@ -818,23 +871,35 @@
             messageParamsJson: '',
           }),
         });
-      });
+      }));
 
       const msg = generateWAMessageFromContent(
         jid,
         {
           interactiveMessage: proto.Message.InteractiveMessage.create({
-            body:             proto.Message.InteractiveMessage.Body.create({ text: body }),
-            carouselMessage:  proto.Message.InteractiveMessage.CarouselMessage.create({ cards: protoCards }),
+            body:            proto.Message.InteractiveMessage.Body.create({ text: body }),
+            carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({ cards: protoCards }),
           }),
         },
         { userJid: sock.user?.id, quoted },
       );
       await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
     } catch (e) {
-      log.warn(`[rich-messages] sendCarousel proto path failed (${e.message}) — text fallback`);
-      const fallback = [body, '', ...cards.map((c, i) => `${i + 1}. ${c.body}`)].join('\n');
-      await sock.sendMessage(jid, { text: fallback }, quoted ? { quoted } : {});
+      log.warn(`[rich-messages] sendCarousel proto path failed (${e.message}) — interactive fallback`);
+      // Fall back to a series of sendInteractive cards
+      try {
+        for (const [i, card] of cards.entries()) {
+          await sendInteractive(sock, jid, {
+            header:  card.header ?? `Card ${i + 1}`,
+            body:    card.body,
+            footer:  card.footer ?? '',
+            buttons: card.buttons ?? [],
+          }, i === 0 ? quoted : undefined);
+        }
+      } catch {
+        const fallback = [body, '', ...cards.map((c, i) => `${i + 1}. ${c.body}`)].join('\n');
+        await sock.sendMessage(jid, { text: fallback }, quoted ? { quoted } : {});
+      }
     }
   }
 
