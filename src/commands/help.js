@@ -88,13 +88,24 @@ function permLabel(m) {
   return flags.length ? flags.join(' · ') : 'everyone';
 }
 
+// ── Time-aware offer greeting ─────────────────────────────────────────────────
+function getOfferGreeting() {
+  const h = new Date().getHours();
+  if (h >= 5  && h < 12) return '🌅 Good morning!';
+  if (h >= 12 && h < 17) return '☀️ Good afternoon!';
+  if (h >= 17 && h < 21) return '🌙 Good evening!';
+  return '🌙 Hello!';
+}
+
 // ── Offer overlay helper ──────────────────────────────────────────────────────
 function buildOfferFields() {
   try {
     const text = (config.menuOfferText ?? '').trim();
     if (!text) return null;
 
-    const fields = { offerText: text };
+    // Prefix the stored offer text with a time-aware greeting so every
+    // menu open greets the user with morning / afternoon / evening automatically.
+    const fields = { offerText: `${getOfferGreeting()} ${text}` };
 
     const url = (config.menuOfferUrl ?? '').trim();
     if (url) fields.offerUrl = url;
@@ -171,9 +182,9 @@ export async function handler(ctx) {
     `\`${p}allmenu\` ꜰᴏʀ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs`;
 
   const menuButtons = [
-    quickReply('🧠 AI Chat',  'cmd_ai'),
-    quickReply('📥 Download', 'cmd_dl'),
-    quickReply('🔍 Search',   'cmd_search'),
+    quickReply('🧠 ᴀɪ ᴄʜᴀᴛ',       `${p}ai`),
+    quickReply('📋 ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs',  `${p}allmenu`),
+    quickReply('📥 ᴅᴏᴡɴʟᴏᴀᴅ',       `${p}dl`),
   ];
 
   const heroImage   = getHeroImage();
