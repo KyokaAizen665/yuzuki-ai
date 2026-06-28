@@ -3,6 +3,7 @@
  * Tests bot responsiveness — interactive Pong card with latency + quick actions.
  */
 import { sendInteractive, quickReply } from '../services/rich-messages.js';
+import { BRAND_FOOTER }                from '../services/brand.js';
 
 export const meta = {
   name:        'ping',
@@ -13,8 +14,6 @@ export const meta = {
   permission:  'public',
 };
 
-const BRAND_FOOTER = '🌸 Yuzuki AI · Powered by cv3inx';
-
 export async function handler(ctx) {
   const { sock, chat: jid, rawMessage, timestamp } = ctx;
   const latencyMs = Math.max(0, Date.now() - timestamp * 1000);
@@ -24,10 +23,10 @@ export async function handler(ctx) {
     await sendInteractive(sock, jid, {
       header:  '🏓 Pong!',
       body:
-        `*Latency* : ${latencyMs}ms\n` +
-        `*Status*  : Online ✅\n` +
-        `*Memory*  : ${memMB} MB\n` +
-        `*AI*      : Ready 🤖`,
+        `ʟᴀᴛᴇɴᴄʏ : ${latencyMs}ms\n` +
+        `sᴛᴀᴛᴜs  : Online ✅\n` +
+        `ᴍᴇᴍᴏʀʏ  : ${memMB} MB\n` +
+        `ᴀɪ      : Ready 🤖`,
       footer:  BRAND_FOOTER,
       buttons: [
         quickReply('🏓 Ping Again', 'ping_again'),
