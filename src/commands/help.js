@@ -182,9 +182,9 @@ export async function handler(ctx) {
     `\`${p}allmenu\` ꜰᴏʀ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs`;
 
   const menuButtons = [
-    quickReply('🧠 ᴀɪ ᴄʜᴀᴛ',       `${p}ai`),
-    quickReply('📋 ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs',  `${p}allmenu`),
-    quickReply('📥 ᴅᴏᴡɴʟᴏᴀᴅ',       `${p}dl`),
+    quickReply(`${p}ai`,      `${p}ai`),
+    quickReply(`${p}allmenu`, `${p}allmenu`),
+    quickReply(`${p}dl`,      `${p}dl`),
   ];
 
   const heroImage   = getHeroImage();
