@@ -9,7 +9,7 @@
  *   • Offer card    — cv3inx native offerText/offerUrl/offerCode/offerExpiration
  *                     Renders as native WhatsApp offer UI. Disabled when
  *                     MENU_OFFER_TEXT is unset.
- *   • 3 buttons     — AI Chat | Bot Info | Owner  (navigation via button.js)
+ *   • 1 singleSelect — "📋 Quick Start" picker with AI / All Commands / Downloader rows
  *   • Footer        — shared BRAND_FOOTER from services/brand.js
  *
  * Detail view (.help <command>):
@@ -30,7 +30,7 @@
 
 import { findCommand, getByCategory, getCategoryNames } from '../plugins/registry.js';
 import { config }                                        from '../config/index.js';
-import { sendInteractive, quickReply }                   from '../services/rich-messages.js';
+import { sendInteractive, quickReply, singleSelect }      from '../services/rich-messages.js';
 import { getHeroImage }                                  from '../services/ui/HeroManager.js';
 import { BRAND_FOOTER }                                  from '../services/brand.js';
 
@@ -182,9 +182,16 @@ export async function handler(ctx) {
     `\`${p}allmenu\` ꜰᴏʀ ᴀʟʟ ᴄᴏᴍᴍᴀɴᴅs`;
 
   const menuButtons = [
-    quickReply(`${p}ai`,      `${p}ai`),
-    quickReply(`${p}allmenu`, `${p}allmenu`),
-    quickReply(`${p}dl`,      `${p}dl`),
+    singleSelect('📋 Quick Start', [
+      {
+        title: '',
+        rows: [
+          { header: '🧠 AI Chat',     title: `${p}ai`,      description: 'Chat, image‑gen & more', id: `${p}ai`      },
+          { header: '📋 All Commands', title: `${p}allmenu`, description: 'Browse every command',   id: `${p}allmenu` },
+          { header: '📥 Downloader',   title: `${p}dl`,      description: 'Save media from links',  id: `${p}dl`      },
+        ],
+      },
+    ]),
   ];
 
   const heroImage   = getHeroImage();
