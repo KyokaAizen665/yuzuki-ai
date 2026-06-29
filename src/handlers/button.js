@@ -148,8 +148,13 @@ function extractParams(ctx) {
       log.debug(`[button] params via interactiveResponseMessage.nativeFlowResponseMessage`);
       return p;
     }
-    if (irm.body?.text) {
-      log.debug(`[button] irm.body.text="${irm.body.text}" but paramsJson missing or empty`);
+    // Fallback: some WA clients omit paramsJson and only set body.text (the button display text).
+    // Use body.text as the id so resolveBody can route it (works when display text starts with
+    // the command prefix, which is guaranteed by the menu button display texts we send).
+    if (irm.body?.text?.trim()) {
+      const bodyText = irm.body.text.trim();
+      log.debug(`[button] paramsJson absent — using irm.body.text as id: "${bodyText.slice(0, 40)}"`);
+      return { id: bodyText, display_text: bodyText };
     }
   }
 
